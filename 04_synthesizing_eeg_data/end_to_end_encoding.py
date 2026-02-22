@@ -43,13 +43,14 @@ from end_to_end_encoding_utils import load_images
 from end_to_end_encoding_utils import load_eeg_data
 from end_to_end_encoding_utils import create_dataloader
 from nested_layer import NestedOutputLayer
+from deep_momentum import DeepMomentum
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--sub", type=int, default=1)
 parser.add_argument("--modeled_time_points", type=str, default="all")
 parser.add_argument("--dnn", type=str, default="alexnet+nested")
 parser.add_argument("--pretrained", type=bool, default=True)
-parser.add_argument("--epochs", type=int, default=50)
+parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=1e-5)
 parser.add_argument("--weight_decay", type=float, default=0.0)
 parser.add_argument("--batch_size", type=int, default=64)
@@ -165,27 +166,27 @@ for m in range(num_models):
     freq_fast = 1
     freq_mid = 2
     freq_slow = 4
+    freq_super_slow = 8
     
     if args.dnn == "alexnet+nested":
         # 1. Fast Parameters (包含原始 CNN 特徵層 + Fast MLP)
         params_fast = (
             list(model.features.parameters())
             + list(model.classifier[1].parameters())
-            + list(model.classifier[8].parameters())
         )
     else:
         params_fast = (
             list(model.features.parameters())
             + list(model.classifier.parameters())
         )
-    optimizer_fast = torch.optim.Adam(
+    optimizer_fast = DeepMomentum(
         params_fast, lr=args.lr, weight_decay=args.weight_decay
     )
     
     if args.dnn == "alexnet+nested":
         # 2. Mid Parameters
         params_mid = list(model.classifier[4].parameters())
-        optimizer_mid = torch.optim.Adam(
+        optimizer_mid = DeepMomentum(
             params_mid, lr=args.lr, weight_decay=args.weight_decay
         )
     else:
@@ -194,11 +195,20 @@ for m in range(num_models):
     if args.dnn == "alexnet+nested":
         # 3. Slow Parameters
         params_slow = list(model.classifier[6].parameters())
-        optimizer_slow = torch.optim.Adam(
+        optimizer_slow = DeepMomentum(
             params_slow, lr=args.lr, weight_decay=args.weight_decay
         )
     else:
         optimizer_slow = None
+
+    if args.dnn == "alexnet+nested":
+        # 4. Super Slow Parameters
+        params_super_slow = list(model.classifier[8].parameters())
+        optimizer_super_slow = DeepMomentum(
+            params_super_slow, lr=args.lr, weight_decay=args.weight_decay
+        )
+    else:
+        optimizer_super_slow = None
 
     loss_fn = torch.nn.MSELoss().to(device)
     scaler = torch.amp.GradScaler('cuda')
@@ -231,8 +241,8 @@ for m in range(num_models):
     # Training and validation loops
     # =============================================================================
     def train_loop(train_dl, model, loss_fn, optimizers, frequencies, current_epoch):
-        opt_fast, opt_mid, opt_slow = optimizers
-        f_fast, f_mid, f_slow = frequencies
+        opt_fast, opt_mid, opt_slow, opt_super_slow = optimizers
+        f_fast, f_mid, f_slow, f_super_slow = frequencies
 
         tot_loss = 0
         model.train()
@@ -272,6 +282,11 @@ for m in range(num_models):
                 scaler.step(opt_slow)
                 opt_slow.zero_grad()
 
+            # === Super Slow Layer Update ===
+            if opt_super_slow is not None and current_step % f_super_slow == 0:
+                scaler.step(opt_super_slow)
+                opt_super_slow.zero_grad()
+
             # === Update Scaler ONCE at the end ===
             scaler.update()
 
@@ -305,8 +320,8 @@ for m in range(num_models):
             train_dl,
             model,
             loss_fn,
-            [optimizer_fast, optimizer_mid, optimizer_slow],
-            [freq_fast, freq_mid, freq_slow],
+            [optimizer_fast, optimizer_mid, optimizer_slow, optimizer_super_slow],
+            [freq_fast, freq_mid, freq_slow, freq_super_slow],
             e,
         )
         # Validation loss
