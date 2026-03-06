@@ -10,8 +10,9 @@ from collections import defaultdict
 # Input arguments
 # =============================================================================
 parser = argparse.ArgumentParser(description="Recursive plotting script - Compare DNNs")
-parser.add_argument("--project_dir", default="../project_directory/results/stats/correlation/encoding-end_to_end", type=str, 
+parser.add_argument("--project_dir", default="project_directory", type=str, 
                     help="Root directory containing DNN subfolders")
+parser.add_argument("--sub", default=1, type=int)
 parser.add_argument("--target_dnns", nargs="+", default=None, 
                     help="Optional: Specify which DNN folders to process")
 args = parser.parse_args()
@@ -99,7 +100,10 @@ if not os.path.exists(args.project_dir):
 
 print(f"正在掃描專案目錄: {args.project_dir}...")
 try:
-    subdirs = [d for d in os.listdir(args.project_dir) if os.path.isdir(os.path.join(args.project_dir, d))]
+    dir = os.path.join(args.project_dir, 'results', 'sub-'+
+			format(args.sub,'02'), 'stats', 'correlation',
+		'encoding-end_to_end')
+    subdirs = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
     subdirs.sort()
 except OSError as e:
     print(f"錯誤：無法讀取專案目錄 ({e})")
@@ -121,7 +125,7 @@ all_plottable_data = []
 
 for dnn_name in dnn_groups:
     print(f"正在讀取 DNN: {dnn_name}")
-    dnn_path = os.path.join(args.project_dir, dnn_name)
+    dnn_path = os.path.join(dir, dnn_name)
     
     # 搜尋檔案
     raw_files = find_files_recursive(dnn_path)
@@ -255,51 +259,95 @@ plt.legend(fontsize=12, loc="upper left", bbox_to_anchor=(1, 1), frameon=False)
 plt.tight_layout()
 
 # =============================================================================
-# Plot 2: Heatmaps (Grid Layout)
+# Plot 2: Per-Channel Temporal Dynamics (Grid Layout - Screen Friendly)
 # =============================================================================
-# 自動計算 Grid 大小 (例如 12 張圖 -> 3x4)
-cols = int(math.ceil(math.sqrt(num_total)))
-rows = int(math.ceil(num_total / cols))
+# 步驟 1：判定通道數量
+first_data_corr = all_plottable_data[0]["data"]["correlation"][all_plottable_data[0]["key"]]
+if first_data_corr.ndim == 3:
+    num_channels = first_data_corr.shape[1]
+elif first_data_corr.ndim == 2:
+    num_channels = first_data_corr.shape[0]
+else:
+    num_channels = 0
 
-fig, axs = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows), sharex=False, sharey=True)
-if num_total == 1:
-    axs = np.array([axs])
-axs = axs.ravel() # 展平方便索引
-
-fig.suptitle("Channel Heatmaps (All Models)", fontsize=30, y=1.02)
-
-for i in range(len(axs)):
-    if i < num_total:
-        item = all_plottable_data[i]
-        key = item["key"]
-        raw_corr = item["data"]["correlation"][key]
+if num_channels == 0:
+    print("無法判定通道數量或張量維度錯誤。")
+else:
+    # 步驟 2：設定 Grid 排版 (每列 4 張子圖)
+    cols = 4
+    rows = int(math.ceil(num_channels / cols))
+    
+    # 調整畫布大小：固定寬度 16，高度根據行數微調 (每行 2 英吋)，適合一般螢幕檢視
+    fig, axs = plt.subplots(rows, cols, figsize=(16, 2 * rows), sharex=True, sharey=True)
+    
+    if rows * cols == 1:
+        axs = np.array([axs])
+    else:
+        axs = axs.ravel()
         
-        # 準備 Heatmap 數據
-        if raw_corr.ndim == 3:
-            h_data = np.mean(raw_corr, 0)
-        elif raw_corr.ndim == 2:
-            h_data = raw_corr
-        else:
-            axs[i].text(0.5, 0.5, "Dim Error", ha='center')
+    # 縮小主標題字體
+    fig.suptitle(f"Time-Resolved Encoding Performance per Channel", fontsize=20, y=1.05)
+    
+    # 步驟 3：逐一繪製每個 Channel 的時間序列
+    for c in range(rows * cols):
+        ax = axs[c]
+        
+        if c >= num_channels:
+            ax.axis('off')
             continue
             
-        im = axs[i].imshow(h_data, aspect="auto", vmin=0, vmax=0.6)
-        axs[i].set_title(item["label"], fontsize=14) # 字體縮小
+        # 縮小各個 Channel 的子圖標題字體
+        ax.set_title(f"Channel {c}", fontsize=12)
         
-        # X 軸
-        step = 20
-        h_xticks = np.arange(0, h_data.shape[1], step)
-        h_xlabels = [round(times[idx], 2) for idx in h_xticks if idx < len(times)]
-        axs[i].set_xticks(h_xticks)
-        axs[i].set_xticklabels(h_xlabels, rotation=45, fontsize=10)
+        # 繪製基線 (Chance level)
+        ax.plot([min(times), max(times)], [0, 0], "k--", linewidth=1.5)
         
-        if i % cols == 0:
-            axs[i].set_ylabel("Channels", fontsize=16)
-    else:
-        # 隱藏多餘的子圖
-        axs[i].axis('off')
+        for i, item in enumerate(all_plottable_data):
+            color = cmap(i / num_total) if num_total > 1 else cmap(0)
+            data_dict = item["data"]
+            key = item["key"]
+            label = item["label"]
+            raw_corr = data_dict["correlation"][key]
+            
+            if raw_corr.ndim == 3:
+                chan_time_data = np.mean(raw_corr, axis=0)
+            elif raw_corr.ndim == 2:
+                chan_time_data = raw_corr
+            else:
+                continue
+            
+            time_course = chan_time_data[c, :]
+            p_len = min(len(times), len(time_course))
+            
+            # 線條寬度從 2.5 縮小至 1.5，避免在小圖中顯得太粗
+            ax.plot(times[:p_len], time_course[:p_len], 
+                    color=color, linewidth=1.5, 
+                    label=label if c == 0 else "")
+        
+        # 步驟 4：設定軸標籤 (字體同步縮小)
+        if c % cols == 0:
+            ax.set_ylabel("Pearson's $r$", fontsize=10)
+            ax.tick_params(axis='y', labelsize=10)
+        
+        if c >= (rows - 1) * cols or (c + cols) >= num_channels:
+            ax.set_xlabel("Time (s)", fontsize=10)
+            ax.set_xticks([-0.2, 0, 0.2, 0.4, 0.6, max(times)])
+            ax.set_xticklabels([-0.2, 0, 0.2, 0.4, 0.6, round(max(times), 1)])
+            ax.tick_params(axis='x', labelsize=10)
 
-plt.tight_layout()
+    # 步驟 5：提取共用圖例 (Legend)
+    handles, labels = axs[0].get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    if "" in by_label: 
+        del by_label[""]
+        
+    # 將圖例字體縮小，並確保不遮擋資料
+    fig.legend(by_label.values(), by_label.keys(), 
+               fontsize=10, loc="upper center", 
+               bbox_to_anchor=(0.5, 1.0), ncol=min(4, len(by_label)), frameon=False)
+    
+    # 調整佈局 (減少邊距)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
 
 # =============================================================================
 # Show All

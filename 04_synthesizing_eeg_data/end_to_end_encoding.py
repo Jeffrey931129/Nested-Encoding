@@ -44,18 +44,20 @@ from end_to_end_encoding_utils import load_eeg_data
 from end_to_end_encoding_utils import create_dataloader
 from nested_layer import NestedOutputLayer
 from deep_momentum import DeepMomentum
+from custom_alexnet import CustomAlexNet
+from m3 import M3
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--sub", type=int, default=1)
 parser.add_argument("--modeled_time_points", type=str, default="all")
-parser.add_argument("--dnn", type=str, default="alexnet+nested")
+parser.add_argument("--dnn", type=str, default="alexnet")
 parser.add_argument("--pretrained", type=bool, default=True)
 parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=1e-5)
 parser.add_argument("--weight_decay", type=float, default=0.0)
 parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--save_trained_models", type=bool, default=False)
-parser.add_argument("--project_dir", default="../project_directory", type=str)
+parser.add_argument("--project_dir", default="project_directory", type=str)
 args = parser.parse_args()
 
 print(">>> End-to-end encoding <<<")
@@ -140,17 +142,13 @@ for m in range(num_models):
     # Load the DNN model and change the last layer to the amount of EEG features
     # =============================================================================
     if args.dnn == "alexnet":
-        model = torchvision.models.alexnet(weights=AlexNet_Weights.DEFAULT if args.pretrained else None)
-        model.classifier.add_module("7", nn.ReLU(inplace=True))
-        model.classifier.add_module("8", nn.Linear(in_features=1000, out_features=out_features))
+        model = CustomAlexNet(num_classes=out_features)
         print(model)
     # elif args.dnn == "resnet50":
     #     model = torchvision.models.resnet50(pretrained=args.pretrained)
     #     model.fc = nn.Linear(in_features=2048, out_features=out_features)
     elif args.dnn == "alexnet+nested":
-        model = torchvision.models.alexnet(weights=AlexNet_Weights.DEFAULT if args.pretrained else None)
-        model.classifier.add_module("7", nn.ReLU(inplace=True))
-        model.classifier.add_module("8", nn.Linear(in_features=1000, out_features=out_features))
+        model = CustomAlexNet(num_classes=out_features)
         print(model)
     else:
         print("args.dnn is not supported")
@@ -166,48 +164,29 @@ for m in range(num_models):
     freq_fast = 1
     freq_mid = 2
     freq_slow = 4
-    freq_super_slow = 8
+    freq_super_slow = 4
     
     if args.dnn == "alexnet+nested":
-        # 1. Fast Parameters (包含原始 CNN 特徵層 + Fast MLP)
-        params_fast = (
-            list(model.features.parameters())
-            + list(model.classifier[1].parameters())
-        )
-    else:
-        params_fast = (
-            list(model.features.parameters())
-            + list(model.classifier.parameters())
-        )
-    optimizer_fast = DeepMomentum(
-        params_fast, lr=args.lr, weight_decay=args.weight_decay
-    )
-    
-    if args.dnn == "alexnet+nested":
+        # 1. Fast Parameters
+        params_fast = list(model.features.parameters()) + list(model.classifier[0].parameters())
+        optimizer_fast = DeepMomentum(params_fast, lr=args.lr, weight_decay=args.weight_decay)
+        
         # 2. Mid Parameters
         params_mid = list(model.classifier[4].parameters())
-        optimizer_mid = DeepMomentum(
-            params_mid, lr=args.lr, weight_decay=args.weight_decay
-        )
-    else:
-        optimizer_mid = None
-
-    if args.dnn == "alexnet+nested":
+        optimizer_mid = DeepMomentum(params_mid, lr=args.lr, weight_decay=args.weight_decay)
+        
         # 3. Slow Parameters
-        params_slow = list(model.classifier[6].parameters())
-        optimizer_slow = DeepMomentum(
-            params_slow, lr=args.lr, weight_decay=args.weight_decay
-        )
-    else:
-        optimizer_slow = None
-
-    if args.dnn == "alexnet+nested":
+        params_slow = list(model.classifier[8].parameters())
+        optimizer_slow = DeepMomentum(params_slow, lr=args.lr, weight_decay=args.weight_decay)
+        
         # 4. Super Slow Parameters
         params_super_slow = list(model.classifier[8].parameters())
-        optimizer_super_slow = DeepMomentum(
-            params_super_slow, lr=args.lr, weight_decay=args.weight_decay
-        )
+        optimizer_super_slow = None
     else:
+        params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
+        optimizer_fast = torch.optim.Adam(params_fast, lr=args.lr, weight_decay=args.weight_decay)
+        optimizer_mid = None
+        optimizer_slow = None
         optimizer_super_slow = None
 
     loss_fn = torch.nn.MSELoss().to(device)
@@ -312,7 +291,7 @@ for m in range(num_models):
     # =============================================================================
     # Train the model and log the training statistics to TensorBoard
     # =============================================================================
-    best_val_loss = 10000
+    best_val_loss = float('inf')
 
     for e in tqdm(range(args.epochs)):
         # Train the model and train loss

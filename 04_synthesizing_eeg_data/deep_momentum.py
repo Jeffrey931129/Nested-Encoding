@@ -60,11 +60,12 @@ class DeepMomentum(Optimizer):
 
                 state['step'] += 1
                 sq_avg = state['sq_avg']
+                grad_avg = state['grad_avg']
                 
                 # Core DeepMomentum Logic from original 'deep.py'
                 update = grad
                 
-                if variant in ["preconditioned", "muon", "dmgd"]:
+                if variant in ["preconditioned", "muon"]:
                     # RMSProp-like preconditioning
                     sq_avg.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
                     denom = sq_avg.sqrt().add_(eps)
@@ -79,6 +80,7 @@ class DeepMomentum(Optimizer):
                     update = torch.tanh(update)
 
                 # Perform step
-                p.add_(update, alpha=-lr)
+                grad_avg.mul_(beta).add_(update, alpha=1 - beta)
+                p.add_(grad_avg, alpha=-lr)
 
         return loss

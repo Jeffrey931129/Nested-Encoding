@@ -59,7 +59,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--used_subs', default=[1],
 	type=list)
 parser.add_argument('--encoding_type', default='end_to_end', type=str)
-parser.add_argument('--dnn', default='alexnet+nested', type=str)
+parser.add_argument('--dnn', default='alexnet', type=str)
 parser.add_argument('--pretrained', default=True, type=bool)
 parser.add_argument('--subjects', default='within', type=str)
 parser.add_argument('--layers', default='all', type=str)
@@ -69,7 +69,7 @@ parser.add_argument('--lr', type=float, default=1e-5)
 parser.add_argument('--weight_decay', type=float, default=0.)
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--n_iter', default=10000, type=int)
-parser.add_argument('--project_dir', default='../project_directory', type=str)
+parser.add_argument('--project_dir', default='project_directory', type=str)
 args = parser.parse_args()
 
 print('>>> Correlation stats <<<')
@@ -214,12 +214,14 @@ stats_dict = {
 
 # Saving directory
 if args.encoding_type == 'linearizing':
-	save_dir = os.path.join(args.project_dir, 'results', 'stats', 'correlation',
+	save_dir = os.path.join(args.project_dir, 'results', 'sub-'+
+			format(sub,'02'), 'stats', 'correlation',
 		'encoding-linearizing', 'subjects-'+args.subjects, 'dnn-'+args.dnn,
 		'pretrained-'+str(args.pretrained), 'layers-'+args.layers,
 		'n_components-'+format(args.n_components,'05'))
 elif args.encoding_type == 'end_to_end':
-	save_dir = os.path.join(args.project_dir, 'results', 'stats', 'correlation',
+	save_dir = os.path.join(args.project_dir, 'results', 'sub-'+
+			format(sub,'02'), 'stats', 'correlation',
 		'encoding-end_to_end', 'dnn-'+args.dnn, 'modeled_time_points-'+
 		args.modeled_time_points, 'pretrained-'+str(args.pretrained),
 		'lr-{:.0e}'.format(args.lr)+'__wd-{:.0e}'.format(args.weight_decay)+
