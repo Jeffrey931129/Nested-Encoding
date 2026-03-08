@@ -7,30 +7,39 @@ class CustomAlexNet(nn.Module):
         
         # 特徵提取層 (引入 Batch Normalization 與 Grouped Convolutions)
         self.features = nn.Sequential(
-            # Conv1: 維持原始感受野，加入 BN 穩定初始特徵分佈
-            nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
+            # Conv1: 維持大 Kernel 負責初始下採樣，這部分較難無損壓縮
+            nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2, bias=False),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
             
-            # Conv2: 引入 groups=2，將卷積核切分為兩組，減少一半參數
-            nn.Conv2d(64, 192, kernel_size=5, stride=1, padding=2, groups=2),
+            # Conv2: 將 5x5 分解為兩層 3x3，並使用 MobileNet 的 Depthwise Separable 概念
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1, groups=64, bias=False),
+            nn.Conv2d(64, 192, kernel_size=1, bias=False),
             nn.BatchNorm2d(192),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
             
-            # Conv3: 負責跨通道資訊融合，不使用分組卷積
-            nn.Conv2d(192, 384, kernel_size=3, stride=1, padding=1),
+            # Conv3: 原本的參數怪獸，改用 Depthwise Separable Convolution
+            nn.Conv2d(192, 192, kernel_size=3, stride=1, padding=1, groups=192, bias=False),
+            nn.Conv2d(192, 384, kernel_size=1, bias=False),
             nn.BatchNorm2d(384),
             nn.ReLU(inplace=True),
             
-            # Conv4: 再次使用 groups=2 降低維度災難帶來的參數膨脹
-            nn.Conv2d(384, 256, kernel_size=3, stride=1, padding=1, groups=2),
+            # Conv4: 改用 Bottleneck 設計 (384 -> 128 -> 128 -> 256)
+            nn.Conv2d(384, 128, kernel_size=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1, groups=4, bias=False), # 進一步提升 groups 至 4
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 256, kernel_size=1, bias=False),
             nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
             
-            # Conv5: 使用 groups=2
-            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1, groups=2),
+            # Conv5: 再次使用 Depthwise Separable Convolution
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1, groups=256, bias=False),
+            nn.Conv2d(256, 256, kernel_size=1, bias=False),
             nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
@@ -40,31 +49,22 @@ class CustomAlexNet(nn.Module):
         # 將空間維度從 N x N 強制壓縮為 1 x 1
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         
-        classifier_layers = []
-        hidden_dim = 512
-        num_hidden_layers = 9 # 前 9 層為隱藏層，第 10 層為輸出
-        
-        # 第 1 層 (Input: 256 -> Hidden: 512)
-        classifier_layers.extend([
-            nn.Linear(256, hidden_dim, bias=False),
-            nn.BatchNorm1d(hidden_dim),
+        # 重構的分類器 (拓撲結構平滑化)
+        self.classifier = nn.Sequential(
+            # 輸入特徵維度從 9216 驟降至 256
+            nn.Linear(in_features=256, out_features=1024, bias=False),
+            nn.BatchNorm1d(1024), # 全連接層也使用 BN 穩定梯度
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.1) # 建議降低 Dropout 機率
-        ])
-        
-        # 第 2 到第 9 層 (Hidden: 512 -> Hidden: 512)
-        for _ in range(num_hidden_layers - 1):
-            classifier_layers.extend([
-                nn.Linear(hidden_dim, hidden_dim, bias=False),
-                nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(inplace=True),
-                nn.Dropout(p=0.1) 
-            ])
+            nn.Dropout(p=0.2),    # 降低 Dropout 強度，避免特徵流失
             
-        # 第 10 層 (輸出層, Hidden: 512 -> Output: 1700)
-        classifier_layers.append(nn.Linear(hidden_dim, num_classes, bias=True))
-        
-        self.classifier = nn.Sequential(*classifier_layers)
+            nn.Linear(in_features=1024, out_features=1024, bias=False),
+            nn.BatchNorm1d(1024),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.2),
+            
+            # 輸出層直接映射至目標類別數
+            nn.Linear(in_features=1024, out_features=num_classes, bias=True)
+        )
 
     def forward(self, x):
         x = self.features(x)

@@ -6,6 +6,7 @@ import matplotlib
 from matplotlib import pyplot as plt
 from collections import defaultdict
 import time
+import subprocess
 
 # =============================================================================
 # Input arguments
@@ -241,12 +242,12 @@ plt.tight_layout()
 
 # 將 Plot 1 存為 JPG，設定 DPI=80 (32英吋 * 80 DPI = 2560 像素，達到 2K 寬度)
 plot1_filename = "model_comparison_2K.jpg"
-plt.savefig(plot1_filename, format="jpg", dpi=80)
+plt.savefig(plot1_filename, format="jpg", dpi=300)
 print(f"已儲存 Plot 1: {plot1_filename} (解析度 2560x1600)")
 plt.close(fig1)  # 釋放記憶體
 
 # =============================================================================
-# Plot 2: Per-Channel Temporal Dynamics (Grid Layout - Screen Friendly)
+# Plot 2: Per-Channel Temporal Dynamics (使用 plt.figure 重構)
 # =============================================================================
 first_data_corr = all_plottable_data[0]["data"]["correlation"][all_plottable_data[0]["key"]]
 if first_data_corr.ndim == 3:
@@ -259,26 +260,26 @@ else:
 if num_channels == 0:
     print("無法判定通道數量或張量維度錯誤。")
 else:
-    cols = 4
-    rows = int(math.ceil(num_channels / cols))
-    
-    # figsize 寬度固定為 32，透過後續設定 dpi=80 可確保寬度為 2560 像素 (2K)
-    fig2, axs = plt.subplots(rows, cols, figsize=(32, 4 * rows), sharex=True, sharey=True)
-    
-    if rows * cols == 1:
-        axs = np.array([axs])
+    # --- 【關鍵保護機制】防止子圖密度過高導致渲染崩潰 ---
+    # 2K 解析度 (2560x1600) 的畫布，若超過 64 個子圖 (16列x4欄)，視覺上會完全糊成一團甚至報錯
+    MAX_CHANNELS = 64 
+    if num_channels > MAX_CHANNELS:
+        print(f"警告：通道數 ({num_channels}) 過大。為保證 2K 圖片成功渲染，僅繪製前 {MAX_CHANNELS} 個通道。")
+        plot_channels = MAX_CHANNELS
     else:
-        axs = axs.ravel()
-        
+        plot_channels = num_channels
+
+    cols = 4
+    rows = int(math.ceil(plot_channels / cols))
+    
+    # 依照要求，重新呼叫 plt.figure 並強制寫死 32x20
+    fig2 = plt.figure(figsize=(32, 20))
     fig2.suptitle(f"Time-Resolved Encoding Performance per Channel", fontsize=20, y=1.05)
     
-    for c in range(rows * cols):
-        ax = axs[c]
+    for c in range(plot_channels):
+        # 手動逐一建立子圖，代替原本的 plt.subplots
+        ax = fig2.add_subplot(rows, cols, c + 1)
         
-        if c >= num_channels:
-            ax.axis('off')
-            continue
-            
         ax.set_title(f"Channel {c}", fontsize=12)
         ax.plot([min(times), max(times)], [0, 0], "k--", linewidth=1.5)
         
@@ -303,17 +304,20 @@ else:
                     color=color, linewidth=1.5, 
                     label=label if c == 0 else "")
         
+        # 設定 Y 軸標籤 (僅限最左側欄)
         if c % cols == 0:
             ax.set_ylabel("Pearson's $r$", fontsize=10)
             ax.tick_params(axis='y', labelsize=10)
         
-        if c >= (rows - 1) * cols or (c + cols) >= num_channels:
+        # 設定 X 軸標籤 (僅限最底部列)
+        if c >= (rows - 1) * cols or (c + cols) >= plot_channels:
             ax.set_xlabel("Time (s)", fontsize=10)
             ax.set_xticks([-0.2, 0, 0.2, 0.4, 0.6, max(times)])
             ax.set_xticklabels([-0.2, 0, 0.2, 0.4, 0.6, round(max(times), 1)])
             ax.tick_params(axis='x', labelsize=10)
 
-    handles, labels = axs[0].get_legend_handles_labels()
+    # 擷取圖例
+    handles, labels = fig2.axes[0].get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     if "" in by_label: 
         del by_label[""]
@@ -322,18 +326,21 @@ else:
                fontsize=10, loc="upper center", 
                bbox_to_anchor=(0.5, 1.0), ncol=min(4, len(by_label)), frameon=False)
     
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    # 處理邊界，並加入例外捕捉以防萬一
+    try:
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+    except Exception as e:
+        print(f"版面佈局調整警告: {e} (已略過以確保圖片輸出)")
     
-    # 將 Plot 2 存為 JPG，同樣設定 DPI=80，寬度確保為 2K 標準
     plot2_filename = "channel_dynamics_2K.jpg"
-    plt.savefig(plot2_filename, format="jpg", dpi=80)
-    print(f"已儲存 Plot 2: {plot2_filename} (解析度 2560x1600)")
+    plt.savefig(plot2_filename, format="jpg", dpi=300)
+    print(f"已儲存 Plot 2: {plot2_filename} (強制寫死解析度為 2560x1600)")
     plt.close(fig2)  # 釋放記憶體
 
 try:
-    os.startfile(plot1_filename)
-    time.sleep(10)
-    os.startfile(plot2_filename)
+    subprocess.Popen(['explorer', os.path.abspath(plot1_filename)])
+    time.sleep(1)
+    subprocess.Popen(['explorer', os.path.abspath(plot2_filename)])
 except Exception as e:
     print(f"{e}")
 
