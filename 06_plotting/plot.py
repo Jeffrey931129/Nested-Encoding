@@ -334,7 +334,7 @@ else:
     
     plot2_filename = "channel_dynamics_2K.jpg"
     plt.savefig(plot2_filename, format="jpg", dpi=300)
-    print(f"已儲存 Plot 2: {plot2_filename} (強制寫死解析度為 2560x1600)")
+    print(f"已儲存 Plot 2: {plot2_filename} (解析度 2560x1600)")
     plt.close(fig2)  # 釋放記憶體
 
 try:

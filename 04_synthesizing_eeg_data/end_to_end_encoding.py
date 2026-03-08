@@ -158,9 +158,6 @@ for m in range(num_models):
     # =============================================================================
     # Define Optimizers for Different Frequencies (CMS Implementation)
     # =============================================================================
-    if args.dnn == "alexnet+nested":
-        nested_layer = model.classifier[8]
-
     freq_fast = 1
     freq_mid = 1
     freq_slow = 2
@@ -172,16 +169,16 @@ for m in range(num_models):
         optimizer_fast = torch.optim.Adam(params_fast, lr=args.lr, weight_decay=args.weight_decay)
         
         # 2. Mid Parameters
-        params_mid = list(model.classifier[0].parameters()) + list(model.classifier[1].parameters())
-        optimizer_mid = M3(params_mid, lr=args.lr, weight_decay=args.weight_decay)
+        params_mid = list(model.classifier_block1.parameters()) + list(model.occipital_head.parameters())
+        optimizer_mid = DeepMomentum(params_mid, lr=args.lr, weight_decay=args.weight_decay)
         
         # 3. Slow Parameters
-        params_slow = list(model.classifier[4].parameters()) + list(model.classifier[5].parameters())
-        optimizer_slow = M3(params_slow, lr=args.lr, weight_decay=args.weight_decay)
+        params_slow = list(model.classifier_block2.parameters()) + list(model.parieto_occipital_head.parameters())
+        optimizer_slow = DeepMomentum(params_slow, lr=args.lr, weight_decay=args.weight_decay)
         
         # 4. Super Slow Parameters
-        params_super_slow = list(model.classifier[8].parameters())
-        optimizer_super_slow = M3(params_super_slow, lr=args.lr, weight_decay=args.weight_decay)
+        params_super_slow = list(model.classifier_block3.parameters()) + list(model.parietal_head.parameters())
+        optimizer_super_slow = DeepMomentum(params_super_slow, lr=args.lr, weight_decay=args.weight_decay)
     else:
         params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
         optimizer_fast = torch.optim.Adam(params_fast, lr=args.lr, weight_decay=args.weight_decay)
