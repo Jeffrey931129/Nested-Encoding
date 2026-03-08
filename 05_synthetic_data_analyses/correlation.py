@@ -57,7 +57,7 @@ from scipy.stats import pearsonr as corr
 parser = argparse.ArgumentParser()
 parser.add_argument('--sub', default=1, type=int)
 parser.add_argument('--encoding_type', default='end_to_end', type=str)
-parser.add_argument('--dnn', default='alexnet', type=str)
+parser.add_argument('--dnn', default='alexnet+nested', type=str)
 parser.add_argument('--pretrained', default=True, type=bool)
 parser.add_argument('--subjects', default='within', type=str)
 parser.add_argument('--layers', default='all', type=str)

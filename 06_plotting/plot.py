@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib
 from matplotlib import pyplot as plt
 from collections import defaultdict
+import time
 
 # =============================================================================
 # Input arguments
@@ -76,7 +77,7 @@ def resolve_labels(file_list):
 # Plotting Configuration
 # =============================================================================
 matplotlib.rcParams["font.sans-serif"] = "DejaVu Sans"
-matplotlib.rcParams["font.size"] = 20  # 稍微調小字體以免圖例太擠
+matplotlib.rcParams["font.size"] = 20
 plt.rc("xtick", labelsize=20)
 plt.rc("ytick", labelsize=20)
 matplotlib.rcParams["axes.linewidth"] = 2
@@ -86,7 +87,6 @@ matplotlib.rcParams["axes.spines.right"] = False
 matplotlib.rcParams["axes.spines.top"] = False
 color_noise_ceiling = (150 / 255, 150 / 255, 150 / 255)
 
-# 使用 tab20 顏色庫以支援更多條線
 import matplotlib.cm as cm
 cmap = matplotlib.cm.get_cmap('tab20')
 
@@ -101,8 +101,8 @@ if not os.path.exists(args.project_dir):
 print(f"正在掃描專案目錄: {args.project_dir}...")
 try:
     dir = os.path.join(args.project_dir, 'results', 'sub-'+
-			format(args.sub,'02'), 'stats', 'correlation',
-		'encoding-end_to_end')
+            format(args.sub,'02'), 'stats', 'correlation',
+        'encoding-end_to_end')
     subdirs = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
     subdirs.sort()
 except OSError as e:
@@ -127,19 +127,16 @@ for dnn_name in dnn_groups:
     print(f"正在讀取 DNN: {dnn_name}")
     dnn_path = os.path.join(dir, dnn_name)
     
-    # 搜尋檔案
     raw_files = find_files_recursive(dnn_path)
     if not raw_files:
         continue
         
-    # 解析標籤 (針對該 DNN 內部)
     files_info = resolve_labels(raw_files)
     
     for fpath, label in files_info:
         try:
             data = np.load(fpath, allow_pickle=True).item()
             
-            # 檢查 key
             if "correlation" not in data or "times" not in data:
                 continue
             keys = list(data["correlation"].keys())
@@ -147,8 +144,6 @@ for dnn_name in dnn_groups:
                 continue
             
             target_key = keys[0]
-            
-            # 組合出全域唯一的標籤： "DNN名稱 | 檔案標籤"
             full_label = f"{dnn_name} | {label}"
             
             all_plottable_data.append({
@@ -167,12 +162,9 @@ if not all_plottable_data:
 
 print(f"總共收集到 {len(all_plottable_data)} 條數據，開始繪圖...")
 
-# 準備共用變數
 times = all_plottable_data[0]["data"]["times"]
 num_total = len(all_plottable_data)
 
-# 計算顯著性位置 (錯開顯示)
-# 找出最小時間長度
 min_len = min([len(item["data"]["significance"][item["key"]]) for item in all_plottable_data])
 sig_matrix = np.zeros((num_total, min_len))
 
@@ -182,30 +174,25 @@ for i, item in enumerate(all_plottable_data):
         if s_data[t] == False:
             sig_matrix[i, t] = -100
         else:
-            # 高度錯開算法
             sig_matrix[i, t] = -0.085 + (abs(i + 4.25 - num_total) / (num_total * 2 + 10) * 1.75) 
-            # 注意：如果線非常多，顯著性點可能會擠在一起，這裡盡量拉開
 
 # =============================================================================
 # Plot 1: Comparison Line Plot (All in One)
 # =============================================================================
-plt.figure(figsize=(16, 10)) # 加大畫布
+# figize 設定為 32x20，稍後我們以 DPI 80 輸出，即 32*80 = 2560 像素 (2K 寬度)
+fig1 = plt.figure(figsize=(32, 20)) 
 plt.title(f"Model Comparison ({len(dnn_groups)} DNNs)", fontsize=30, pad=20)
 
-# Chance line
 plt.plot([-10, 10], [0, 0], "k--", [0, 0], [10, -10], "k--", label="_nolegend_", linewidth=3)
 
 for i, item in enumerate(all_plottable_data):
-    # 使用 colormap 生成顏色，避免重複
     color = cmap(i / num_total) if num_total > 1 else cmap(0)
-    
     data_dict = item["data"]
     key = item["key"]
     label = item["label"]
     
     corr = data_dict["correlation"][key]
     
-    # 平均處理
     if corr.ndim == 3:
         mean_corr = np.mean(np.mean(corr, 0), 0)
         ci_lo = data_dict["ci_lower"][key]
@@ -221,21 +208,16 @@ for i, item in enumerate(all_plottable_data):
         
     p_len = min(len(times), len(mean_corr))
     
-    # 畫線
     plt.plot(times[:p_len], mean_corr[:p_len], color=color, linewidth=3, label=label)
     
-    # 畫 CI
     if "ci_lower" in data_dict:
         plt.fill_between(times[:p_len], ci_up[:p_len], ci_lo[:p_len], color=color, alpha=0.1)
         
-    # 畫顯著性
     sig_y = sig_matrix[i]
     if len(sig_y) > 0:
-        # 只畫有效的點
         valid_idx = sig_y > -10
         plt.plot(times[:len(sig_y)][valid_idx], sig_y[valid_idx], "o", color=color, markersize=3)
 
-# Noise Ceiling (只畫第一筆數據的，假設受試者相同)
 first_data = all_plottable_data[0]["data"]
 if "noise_ceiling_low" in first_data:
     nc_low = first_data["noise_ceiling_low"]
@@ -254,14 +236,18 @@ plt.xticks(ticks=xticks, labels=xlabels)
 plt.xlim(left=min(times), right=max(times))
 plt.ylim(bottom=-0.1, top=1)
 
-# 圖例 (放外面以免遮擋，或自動調整)
 plt.legend(fontsize=12, loc="upper left", bbox_to_anchor=(1, 1), frameon=False)
 plt.tight_layout()
+
+# 將 Plot 1 存為 JPG，設定 DPI=80 (32英吋 * 80 DPI = 2560 像素，達到 2K 寬度)
+plot1_filename = "model_comparison_2K.jpg"
+plt.savefig(plot1_filename, format="jpg", dpi=80)
+print(f"已儲存 Plot 1: {plot1_filename} (解析度 2560x1600)")
+plt.close(fig1)  # 釋放記憶體
 
 # =============================================================================
 # Plot 2: Per-Channel Temporal Dynamics (Grid Layout - Screen Friendly)
 # =============================================================================
-# 步驟 1：判定通道數量
 first_data_corr = all_plottable_data[0]["data"]["correlation"][all_plottable_data[0]["key"]]
 if first_data_corr.ndim == 3:
     num_channels = first_data_corr.shape[1]
@@ -273,22 +259,19 @@ else:
 if num_channels == 0:
     print("無法判定通道數量或張量維度錯誤。")
 else:
-    # 步驟 2：設定 Grid 排版 (每列 4 張子圖)
     cols = 4
     rows = int(math.ceil(num_channels / cols))
     
-    # 調整畫布大小：固定寬度 16，高度根據行數微調 (每行 2 英吋)，適合一般螢幕檢視
-    fig, axs = plt.subplots(rows, cols, figsize=(16, 2 * rows), sharex=True, sharey=True)
+    # figsize 寬度固定為 32，透過後續設定 dpi=80 可確保寬度為 2560 像素 (2K)
+    fig2, axs = plt.subplots(rows, cols, figsize=(32, 4 * rows), sharex=True, sharey=True)
     
     if rows * cols == 1:
         axs = np.array([axs])
     else:
         axs = axs.ravel()
         
-    # 縮小主標題字體
-    fig.suptitle(f"Time-Resolved Encoding Performance per Channel", fontsize=20, y=1.05)
+    fig2.suptitle(f"Time-Resolved Encoding Performance per Channel", fontsize=20, y=1.05)
     
-    # 步驟 3：逐一繪製每個 Channel 的時間序列
     for c in range(rows * cols):
         ax = axs[c]
         
@@ -296,10 +279,7 @@ else:
             ax.axis('off')
             continue
             
-        # 縮小各個 Channel 的子圖標題字體
         ax.set_title(f"Channel {c}", fontsize=12)
-        
-        # 繪製基線 (Chance level)
         ax.plot([min(times), max(times)], [0, 0], "k--", linewidth=1.5)
         
         for i, item in enumerate(all_plottable_data):
@@ -319,12 +299,10 @@ else:
             time_course = chan_time_data[c, :]
             p_len = min(len(times), len(time_course))
             
-            # 線條寬度從 2.5 縮小至 1.5，避免在小圖中顯得太粗
             ax.plot(times[:p_len], time_course[:p_len], 
                     color=color, linewidth=1.5, 
                     label=label if c == 0 else "")
         
-        # 步驟 4：設定軸標籤 (字體同步縮小)
         if c % cols == 0:
             ax.set_ylabel("Pearson's $r$", fontsize=10)
             ax.tick_params(axis='y', labelsize=10)
@@ -335,22 +313,28 @@ else:
             ax.set_xticklabels([-0.2, 0, 0.2, 0.4, 0.6, round(max(times), 1)])
             ax.tick_params(axis='x', labelsize=10)
 
-    # 步驟 5：提取共用圖例 (Legend)
     handles, labels = axs[0].get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     if "" in by_label: 
         del by_label[""]
         
-    # 將圖例字體縮小，並確保不遮擋資料
-    fig.legend(by_label.values(), by_label.keys(), 
+    fig2.legend(by_label.values(), by_label.keys(), 
                fontsize=10, loc="upper center", 
                bbox_to_anchor=(0.5, 1.0), ncol=min(4, len(by_label)), frameon=False)
     
-    # 調整佈局 (減少邊距)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
+    
+    # 將 Plot 2 存為 JPG，同樣設定 DPI=80，寬度確保為 2K 標準
+    plot2_filename = "channel_dynamics_2K.jpg"
+    plt.savefig(plot2_filename, format="jpg", dpi=80)
+    print(f"已儲存 Plot 2: {plot2_filename} (解析度 2560x1600)")
+    plt.close(fig2)  # 釋放記憶體
 
-# =============================================================================
-# Show All
-# =============================================================================
-print("繪圖完成，顯示視窗...")
-plt.show()
+try:
+    os.startfile(plot1_filename)
+    time.sleep(10)
+    os.startfile(plot2_filename)
+except Exception as e:
+    print(f"{e}")
+
+print("所有繪圖任務完成並已存成 2K JPG 檔案。")

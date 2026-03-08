@@ -50,7 +50,7 @@ from m3 import M3
 parser = argparse.ArgumentParser()
 parser.add_argument("--sub", type=int, default=1)
 parser.add_argument("--modeled_time_points", type=str, default="all")
-parser.add_argument("--dnn", type=str, default="alexnet")
+parser.add_argument("--dnn", type=str, default="alexnet+nested")
 parser.add_argument("--pretrained", type=bool, default=True)
 parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=1e-5)
@@ -162,26 +162,26 @@ for m in range(num_models):
         nested_layer = model.classifier[8]
 
     freq_fast = 1
-    freq_mid = 2
-    freq_slow = 4
+    freq_mid = 1
+    freq_slow = 2
     freq_super_slow = 4
     
     if args.dnn == "alexnet+nested":
         # 1. Fast Parameters
-        params_fast = list(model.features.parameters()) + list(model.classifier[0].parameters())
+        params_fast = list(model.features.parameters())
         optimizer_fast = DeepMomentum(params_fast, lr=args.lr, weight_decay=args.weight_decay)
         
         # 2. Mid Parameters
-        params_mid = list(model.classifier[4].parameters())
+        params_mid = list(model.classifier[0].parameters()) + list(model.classifier[1].parameters())
         optimizer_mid = DeepMomentum(params_mid, lr=args.lr, weight_decay=args.weight_decay)
         
         # 3. Slow Parameters
-        params_slow = list(model.classifier[8].parameters())
+        params_slow = list(model.classifier[4].parameters()) + list(model.classifier[5].parameters())
         optimizer_slow = DeepMomentum(params_slow, lr=args.lr, weight_decay=args.weight_decay)
         
         # 4. Super Slow Parameters
         params_super_slow = list(model.classifier[8].parameters())
-        optimizer_super_slow = None
+        optimizer_super_slow = DeepMomentum(params_super_slow, lr=args.lr, weight_decay=args.weight_decay)
     else:
         params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
         optimizer_fast = torch.optim.Adam(params_fast, lr=args.lr, weight_decay=args.weight_decay)

@@ -40,22 +40,31 @@ class CustomAlexNet(nn.Module):
         # 將空間維度從 N x N 強制壓縮為 1 x 1
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         
-        # 重構的分類器 (拓撲結構平滑化)
-        self.classifier = nn.Sequential(
-            # 輸入特徵維度從 9216 驟降至 256
-            nn.Linear(in_features=256, out_features=1024, bias=False),
-            nn.BatchNorm1d(1024), # 全連接層也使用 BN 穩定梯度
+        classifier_layers = []
+        hidden_dim = 512
+        num_hidden_layers = 9 # 前 9 層為隱藏層，第 10 層為輸出
+        
+        # 第 1 層 (Input: 256 -> Hidden: 512)
+        classifier_layers.extend([
+            nn.Linear(256, hidden_dim, bias=False),
+            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.2),    # 降低 Dropout 強度，避免特徵流失
+            nn.Dropout(p=0.1) # 建議降低 Dropout 機率
+        ])
+        
+        # 第 2 到第 9 層 (Hidden: 512 -> Hidden: 512)
+        for _ in range(num_hidden_layers - 1):
+            classifier_layers.extend([
+                nn.Linear(hidden_dim, hidden_dim, bias=False),
+                nn.BatchNorm1d(hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(p=0.1) 
+            ])
             
-            nn.Linear(in_features=1024, out_features=1024, bias=False),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=0.2),
-            
-            # 輸出層直接映射至目標類別數
-            nn.Linear(in_features=1024, out_features=num_classes, bias=True)
-        )
+        # 第 10 層 (輸出層, Hidden: 512 -> Output: 1700)
+        classifier_layers.append(nn.Linear(hidden_dim, num_classes, bias=True))
+        
+        self.classifier = nn.Sequential(*classifier_layers)
 
     def forward(self, x):
         x = self.features(x)
