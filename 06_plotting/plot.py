@@ -102,8 +102,7 @@ if not os.path.exists(args.project_dir):
 print(f"正在掃描專案目錄: {args.project_dir}...")
 try:
     dir = os.path.join(args.project_dir, 'results', 'sub-'+
-            format(args.sub,'02'), 'stats', 'correlation',
-        'encoding-end_to_end')
+            format(args.sub,'02'), 'stats')
     subdirs = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
     subdirs.sort()
 except OSError as e:

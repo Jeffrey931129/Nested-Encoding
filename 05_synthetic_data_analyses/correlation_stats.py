@@ -221,11 +221,7 @@ if args.encoding_type == 'linearizing':
 		'n_components-'+format(args.n_components,'05'))
 elif args.encoding_type == 'end_to_end':
 	save_dir = os.path.join(args.project_dir, 'results', 'sub-'+
-			format(sub,'02'), 'stats', 'correlation',
-		'encoding-end_to_end', 'dnn-'+args.dnn, 'modeled_time_points-'+
-		args.modeled_time_points, 'pretrained-'+str(args.pretrained),
-		'lr-{:.0e}'.format(args.lr)+'__wd-{:.0e}'.format(args.weight_decay)+
-		'__bs-'+format(args.batch_size,'03'))
+			format(sub,'02'), 'stats', 'dnn-'+args.dnn)
 file_name = 'correlation_stats.npy'
 
 # Create the directory if not existing and save
