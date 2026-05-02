@@ -50,11 +50,12 @@ from m3 import M3
 parser = argparse.ArgumentParser()
 parser.add_argument("--sub", type=int, default=1)
 parser.add_argument("--modeled_time_points", type=str, default="all")
-parser.add_argument("--dnn", type=str, default="alexnet+nested")
+parser.add_argument("--dnn", type=str, default="gradient")
 parser.add_argument("--pretrained", type=bool, default=True)
 parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=1e-5)
 parser.add_argument("--weight_decay", type=float, default=0.0)
+parser.add_argument("--momentum", type=float, default=0.9)
 parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--save_trained_models", type=bool, default=False)
 parser.add_argument("--project_dir", default="project_directory", type=str)
@@ -144,10 +145,10 @@ for m in range(num_models):
     if args.dnn == "alexnet":
         model = CustomAlexNet(num_classes=out_features)
         print(model)
-    # elif args.dnn == "resnet50":
-    #     model = torchvision.models.resnet50(pretrained=args.pretrained)
-    #     model.fc = nn.Linear(in_features=2048, out_features=out_features)
     elif args.dnn == "alexnet+nested":
+        model = CustomAlexNet(num_classes=out_features)
+        print(model)
+    elif args.dnn == "gradient":
         model = CustomAlexNet(num_classes=out_features)
         print(model)
     else:
@@ -162,26 +163,29 @@ for m in range(num_models):
     freq_mid = 1
     freq_slow = 2
     freq_super_slow = 4
-    
-    if args.dnn == "alexnet+nested":
+
+    if args.dnn == "alexnet":
+        params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
+        optimizer_fast = torch.optim.Adam(params_fast, lr=args.lr, weight_decay=args.weight_decay)
+        optimizer_mid = None
+        optimizer_slow = None
+        optimizer_super_slow = None
+    elif args.dnn == "alexnet+nested":
         # 1. Fast Parameters
         params_fast = list(model.features.parameters())
         optimizer_fast = torch.optim.Adam(params_fast, lr=args.lr, weight_decay=args.weight_decay)
-        
         # 2. Mid Parameters
         params_mid = list(model.classifier_block1.parameters()) + list(model.occipital_head.parameters())
         optimizer_mid = DeepMomentum(params_mid, lr=args.lr, weight_decay=args.weight_decay)
-        
         # 3. Slow Parameters
         params_slow = list(model.classifier_block2.parameters()) + list(model.parieto_occipital_head.parameters())
         optimizer_slow = DeepMomentum(params_slow, lr=args.lr, weight_decay=args.weight_decay)
-        
         # 4. Super Slow Parameters
         params_super_slow = list(model.classifier_block3.parameters()) + list(model.parietal_head.parameters())
         optimizer_super_slow = DeepMomentum(params_super_slow, lr=args.lr, weight_decay=args.weight_decay)
-    else:
+    elif args.dnn == "gradient":
         params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
-        optimizer_fast = torch.optim.Adam(params_fast, lr=args.lr, weight_decay=args.weight_decay)
+        optimizer_fast = torch.optim.SGD(params_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)
         optimizer_mid = None
         optimizer_slow = None
         optimizer_super_slow = None
