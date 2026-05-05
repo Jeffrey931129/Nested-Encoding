@@ -53,7 +53,7 @@ parser.add_argument("--modeled_time_points", type=str, default="all")
 parser.add_argument("--dnn", type=str, default="gradient")
 parser.add_argument("--pretrained", type=bool, default=True)
 parser.add_argument("--epochs", type=int, default=100)
-parser.add_argument("--lr", type=float, default=1e-5)
+parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--weight_decay", type=float, default=0.0)
 parser.add_argument("--momentum", type=float, default=0.9)
 parser.add_argument("--batch_size", type=int, default=64)
@@ -314,7 +314,7 @@ for m in range(num_models):
             best_model = deepcopy(model)
             best_epochs[m] = e + 1
             best_val_loss = val_loss
-    print(f"Best epochs: {best_epochs[m]}")
+    print(f"Best Epochs: {best_epochs[m]}, Best Loss: {best_val_loss:.4f}")
 
     # Delete the model from GPU memory
     del model
