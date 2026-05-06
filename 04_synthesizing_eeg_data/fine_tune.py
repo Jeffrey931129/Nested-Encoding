@@ -8,6 +8,7 @@ from datetime import datetime
 from tqdm import tqdm
 from sklearn.model_selection import ParameterGrid
 from sklearn.utils import resample
+from nested_sgd import NestedSGD
 
 # Import your custom utilities
 from end_to_end_encoding_utils import load_images
@@ -56,24 +57,38 @@ class CustomAlexNet(nn.Module):
 # =============================================================================
 # Core Training Function with Progress Bar and Early Stopping
 # =============================================================================
-def train_and_evaluate(config, train_dl, val_dl, device, out_features, combo_id, max_epochs=200, patience=15):
+def train_and_evaluate(config, train_dl, val_dl, device, out_features, combo_id, model_type="gradient", max_epochs=200, patience=15):
     model = CustomAlexNet(num_classes=out_features).to(device)
     
-    # Optimizer configuration based on freezing strategy
+    # Configure parameter groups based on freezing strategy
     if config['freeze_conv_base']:
         for param in model.features.parameters():
             param.requires_grad = False
+        param_groups = [{'params': model.classifier.parameters()}]
+    else:
+        param_groups = [
+            {'params': model.features.parameters(), 'lr': config['lr'] * 0.1},
+            {'params': model.classifier.parameters()}
+        ]
+
+    # Select optimizer based on model_type
+    if model_type == "gradient":
+        # Fallback to standard SGD for "gradient"
         optimizer = torch.optim.SGD(
-            model.classifier.parameters(),
+            param_groups,
             lr=config['lr'],
             momentum=config['momentum'],
             weight_decay=config['weight_decay']
         )
-    else:
-        optimizer = torch.optim.SGD([
-            {'params': model.features.parameters(), 'lr': config['lr'] * 0.1},
-            {'params': model.classifier.parameters(), 'lr': config['lr']}
-        ], momentum=config['momentum'], weight_decay=config['weight_decay'])
+    elif model_type == "gradient+nested":
+        optimizer = NestedSGD(
+            param_groups,
+            lr=config['lr'],
+            momentum=config['momentum'],
+            alpha=config['alpha'],  
+            chunk_size=config['chunk_size'],     
+            weight_decay=config['weight_decay']
+        )
 
     loss_fn = nn.MSELoss().to(device)
     scaler = torch.amp.GradScaler('cuda') if device == 'cuda' else None
@@ -150,6 +165,7 @@ if __name__ == "__main__":
     class Args: pass
     args = Args()
     args.sub, args.modeled_time_points, args.project_dir = 1, "all", "project_directory"
+    args.model = "gradient+nested"
     
     # Seeds for reproducibility
     seed = 20200220
@@ -166,13 +182,24 @@ if __name__ == "__main__":
     out_features = y_test.shape[1] * y_test.shape[2]
 
     # 3. Define Grid
-    hyperparameter_space = {
-        'lr': [1e-3, 5e-4, 1e-4], # Shifted up based on your previous logs
-        'batch_size': [32, 64],
-        'momentum': [0.9, 0.95],
-        'weight_decay': [1e-3, 1e-4],
-        'freeze_conv_base': [True, False]
-    }
+    if args.model == "gradient":
+        hyperparameter_space = {
+            'lr': [1e-3, 5e-4, 1e-4], # Shifted up based on your previous logs
+            'batch_size': [32, 64],
+            'momentum': [0.9, 0.95],
+            'weight_decay': [0, 1e-3, 1e-4],
+            'freeze_conv_base': [True, False]
+        }
+    elif args.model == "gradient+nested":
+        hyperparameter_space = {
+            'lr': [1e-3, 5e-4, 1e-4], 
+            'batch_size': [32, 64],
+            'momentum': [0.9, 0.95],
+            'weight_decay': [0, 1e-3, 1e-4],
+            'freeze_conv_base': [True, False],
+            'alpha': [0.9, 1],
+            'chunk_size': [4, 50, 100]
+        }
     grid = list(ParameterGrid(hyperparameter_space))
     
     # 4. Search Loop
@@ -189,7 +216,11 @@ if __name__ == "__main__":
             train_dl, val_dl, _ = create_dataloader(args, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
             
             # Run Training
-            best_val, epochs_run = train_and_evaluate(config, train_dl, val_dl, device, out_features, combo_id=idx+1)
+            best_val, epochs_run = train_and_evaluate(
+                config, train_dl, val_dl, device, out_features, 
+                combo_id=idx+1, 
+                model_type=args.model
+            )
             
             # Log results
             log_entry = f"{combo_str}\n-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n"

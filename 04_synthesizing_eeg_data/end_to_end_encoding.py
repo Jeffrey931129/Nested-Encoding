@@ -46,11 +46,12 @@ from nested_layer import NestedOutputLayer
 from deep_momentum import DeepMomentum
 from custom_alexnet import CustomAlexNet
 from m3 import M3
+from nested_sgd import NestedSGD
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--sub", type=int, default=1)
 parser.add_argument("--modeled_time_points", type=str, default="all")
-parser.add_argument("--dnn", type=str, default="gradient")
+parser.add_argument("--dnn", type=str, default="gradient+nested")
 parser.add_argument("--pretrained", type=bool, default=True)
 parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=1e-3)
@@ -151,6 +152,9 @@ for m in range(num_models):
     elif args.dnn == "gradient":
         model = CustomAlexNet(num_classes=out_features)
         print(model)
+    elif args.dnn == "gradient+nested":
+        model = CustomAlexNet(num_classes=out_features)
+        print(model)
     else:
         print("args.dnn is not supported")
         exit()
@@ -186,6 +190,12 @@ for m in range(num_models):
     elif args.dnn == "gradient":
         params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
         optimizer_fast = torch.optim.SGD(params_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)
+        optimizer_mid = None
+        optimizer_slow = None
+        optimizer_super_slow = None
+    elif args.dnn == "gradient+nested":
+        params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
+        optimizer_fast = NestedSGD(params_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)
         optimizer_mid = None
         optimizer_slow = None
         optimizer_super_slow = None
