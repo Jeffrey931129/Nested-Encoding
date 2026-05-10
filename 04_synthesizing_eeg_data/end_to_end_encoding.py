@@ -57,7 +57,7 @@ parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--weight_decay", type=float, default=0.0)
 parser.add_argument("--momentum", type=float, default=0.9)
-parser.add_argument("--batch_size", type=int, default=64)
+parser.add_argument("--batch_size", type=int, default=32)
 parser.add_argument("--save_trained_models", type=bool, default=False)
 parser.add_argument("--project_dir", default="project_directory", type=str)
 args = parser.parse_args()
@@ -194,11 +194,42 @@ for m in range(num_models):
         optimizer_slow = None
         optimizer_super_slow = None
     elif args.dnn == "gradient+nested":
-        params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
-        optimizer_fast = NestedSGD(params_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)
-        optimizer_mid = None
-        optimizer_slow = None
-        optimizer_super_slow = None
+        params_fast = list(model.features.parameters())
+        optimizer_fast = NestedSGD(
+            params_fast, 
+            lr=0.0001, 
+            weight_decay=0, 
+            momentum=0.95,
+            alpha=0.9,
+            chunk_size=1,
+        )
+        params_mid = list(model.classifier[1].parameters())
+        optimizer_mid = NestedSGD(
+            params_mid, 
+            lr=0.001, 
+            weight_decay=0, 
+            momentum=0.95,
+            alpha=0.9,
+            chunk_size=1,
+        )
+        params_slow = list(model.classifier[4].parameters())
+        optimizer_slow = NestedSGD(
+            params_slow, 
+            lr=0.001, 
+            weight_decay=0, 
+            momentum=0.95,
+            alpha=0.9,
+            chunk_size=1,
+        )
+        params_super_slow = list(model.classifier[6].parameters())
+        optimizer_super_slow = NestedSGD(
+            params_super_slow, 
+            lr=0.001, 
+            weight_decay=0, 
+            momentum=0.95,
+            alpha=0.9,
+            chunk_size=1,
+        )
 
     loss_fn = torch.nn.MSELoss().to(device)
     scaler = torch.amp.GradScaler('cuda')

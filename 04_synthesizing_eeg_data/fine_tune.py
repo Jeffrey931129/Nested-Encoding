@@ -192,9 +192,9 @@ if __name__ == "__main__":
         }
     elif args.model == "gradient+nested":
         hyperparameter_space = {
-            'lr': [1e-3, 5e-4, 1e-4], 
+            'lr': [1e-3], 
             'batch_size': [32, 64],
-            'momentum': [0.9, 0.95],
+            'momentum': [0.95],
             'weight_decay': [0, 1e-3, 1e-4],
             'freeze_conv_base': [True, False],
             'alpha': [0.9, 1],
@@ -204,6 +204,8 @@ if __name__ == "__main__":
     
     # 4. Search Loop
     with open(log_file, "w") as f:
+        f.write(f">> {args.model} <<\n")
+        f.write("-" * 50 + "\n")
         best_overall_loss = float('inf')
         best_overall_config = None # Added tracking for the best configuration
         
@@ -235,7 +237,7 @@ if __name__ == "__main__":
             f.flush() # Ensure it writes to disk immediately
             
         # 5. Final Statistics Summary
-        summary_str = "\n" + "="*50 + "\n"
+        summary_str = "="*50 + "\n"
         summary_str += "Optimization Completed\n"
         summary_str += f"Best Validation Loss: {best_overall_loss:.4f}\n"
         summary_str += "Optimal Hyperparameters:\n"
