@@ -14,47 +14,7 @@ from nested_sgd import NestedSGD
 from end_to_end_encoding_utils import load_images
 from end_to_end_encoding_utils import load_eeg_data
 from end_to_end_encoding_utils import create_dataloader
-
-
-# =============================================================================
-# Standardized AlexNet for EEG Prediction
-# =============================================================================
-class CustomAlexNet(nn.Module):
-    def __init__(self, num_classes):
-        super(CustomAlexNet, self).__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.Conv2d(64, 192, kernel_size=5, padding=2),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.Conv2d(192, 384, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-        )
-        self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
-        self.classifier = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(256 * 6 * 6, 4096),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=0.5),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            nn.Linear(4096, num_classes),
-        )
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.classifier(x)
-        return x
-
+from custom_alexnet import CustomAlexNet
 
 # =============================================================================
 # Core Training Function with Progress Bar and Early Stopping
@@ -122,6 +82,14 @@ def train_and_evaluate(
             chunk_size=config["chunk_size"],
             weight_decay=config["weight_decay"],
         )
+    elif model_type == "adam":
+        opt_fast = torch.optim.Adam(
+            param_fast + param_mid + param_slow,
+            lr=config["lr"],
+            weight_decay=config["weight_decay"],
+        )
+        opt_mid = None
+        opt_slow = None
 
     loss_fn = nn.MSELoss().to(device)
     scaler = torch.amp.GradScaler("cuda") if device == "cuda" else None
@@ -226,7 +194,7 @@ if __name__ == "__main__":
 
     args = Args()
     args.sub, args.modeled_time_points, args.project_dir = 1, "all", "project_directory"
-    args.model = "gradient+nested"
+    args.model = "adam"
 
     # Seeds for reproducibility
     seed = 20200220
@@ -249,7 +217,7 @@ if __name__ == "__main__":
     # 3. Define Grid
     if args.model == "gradient":
         hyperparameter_space = {
-            "lr": [1e-3, 5e-4, 1e-4],  # Shifted up based on your previous logs
+            "lr": [1e-3, 5e-4, 1e-4],  
             "batch_size": [32, 64],
             "momentum": [0.9, 0.95],
             "weight_decay": [0, 1e-3, 1e-4],
@@ -265,6 +233,13 @@ if __name__ == "__main__":
             "alpha": [0.9],
             "chunk_size": [10, 25],
             "freq": [(1, 2, 4), (1, 4, 8)],
+        }
+    elif args.model == "adam":
+        hyperparameter_space = {
+            "lr": [1e-4, 5e-5, 1e-5],  
+            "batch_size": [32, 64],
+            "weight_decay": [0, 1e-4, 1e-5],
+            "freeze_conv_base": [True, False],
         }
     grid = list(ParameterGrid(hyperparameter_space))
 

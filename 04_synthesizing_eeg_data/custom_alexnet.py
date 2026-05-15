@@ -2,11 +2,8 @@ import torch
 import torch.nn as nn
 
 class CustomAlexNet(nn.Module):
-    def __init__(self, num_classes=1700):
+    def __init__(self, num_classes):
         super(CustomAlexNet, self).__init__()
-        
-        # Feature extraction layer matching standard AlexNet architecture
-        # Utilizing spatial convolutions to extract hierarchical spatial hierarchies
         self.features = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
             nn.ReLU(inplace=True),
@@ -22,14 +19,7 @@ class CustomAlexNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
         )
-        
-        # Adaptive average pooling to ensure a fixed output size of 6x6 spatial resolution
-        # regardless of the input image resolution before passing to the classifier
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
-        
-        # Standard AlexNet classifier with monolithic sequential fully connected layers
-        # The final linear layer projects the 4096-dimensional latent representation 
-        # into the target output space of 1700 dimensions.
         self.classifier = nn.Sequential(
             nn.Dropout(p=0.5),
             nn.Linear(256 * 6 * 6, 4096),
@@ -41,19 +31,10 @@ class CustomAlexNet(nn.Module):
         )
 
     def forward(self, x):
-        # Pass input through convolutional feature extractor
         x = self.features(x)
-        
-        # Apply adaptive pooling
         x = self.avgpool(x)
-        
-        # Flatten the tensor to compute the dot product in the fully connected layers
-        # Transforms shape from (Batch_Size, 256, 6, 6) to (Batch_Size, 9216)
-        x = torch.flatten(x, 1) 
-        
-        # Pass through the sequential classifier network
+        x = torch.flatten(x, 1)
         x = self.classifier(x)
-        
         return x
 
 # Testing the model output and parameter shape
