@@ -9,12 +9,13 @@ from tqdm import tqdm
 from sklearn.model_selection import ParameterGrid
 from sklearn.utils import resample
 from nested_sgd import NestedSGD
+from nested_adam import NestedAdam
+from custom_alexnet import CustomAlexNet
 
 # Import your custom utilities
 from end_to_end_encoding_utils import load_images
 from end_to_end_encoding_utils import load_eeg_data
 from end_to_end_encoding_utils import create_dataloader
-from custom_alexnet import CustomAlexNet
 
 # =============================================================================
 # Core Training Function with Progress Bar and Early Stopping
@@ -90,6 +91,34 @@ def train_and_evaluate(
         )
         opt_mid = None
         opt_slow = None
+    elif model_type == "adam+nested":
+        opt_fast = NestedAdam(
+            param_fast,
+            lr=config["lr"],
+            beta=config["beta"],
+            eps=config["eps"],
+            alpha=config["alpha"],
+            chunk_size=config["chunk_size"],
+            weight_decay=config["weight_decay"],
+        )
+        opt_mid = NestedAdam(
+            param_mid,
+            lr=config["lr"],
+            beta=config["beta"],
+            eps=config["eps"],
+            alpha=config["alpha"],
+            chunk_size=config["chunk_size"],
+            weight_decay=config["weight_decay"],
+        )
+        opt_slow = NestedAdam(
+            param_slow,
+            lr=config["lr"],
+            beta=config["beta"],
+            eps=config["eps"],
+            alpha=config["alpha"],
+            chunk_size=config["chunk_size"],
+            weight_decay=config["weight_decay"],
+        )
 
     loss_fn = nn.MSELoss().to(device)
     scaler = torch.amp.GradScaler("cuda") if device == "cuda" else None
@@ -240,6 +269,18 @@ if __name__ == "__main__":
             "batch_size": [32, 64],
             "weight_decay": [0, 1e-4, 1e-5],
             "freeze_conv_base": [True, False],
+        }
+    elif args.model == "adam+nested":
+        hyperparameter_space = {
+            "lr": [1e-4, 5e-3],
+            "batch_size": [32, 64],
+            "betas": [(0.9, 0.999), (0.95, 0.999)],
+            "eps": [1e-8],
+            "alpha": [0.5, 0.9],
+            "weight_decay": [0.0, 1e-4],
+            "freeze_conv_base": [True, False],
+            "chunk_size": [10, 25, 50],
+            "freq": [(1, 2, 4), (1, 4, 8)],
         }
     grid = list(ParameterGrid(hyperparameter_space))
 
