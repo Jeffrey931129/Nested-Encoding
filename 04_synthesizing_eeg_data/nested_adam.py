@@ -19,6 +19,7 @@ class NestedAdam(torch.optim.Optimizer):
         beta: Tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
         alpha: float = 1.0,
+        gamma: float = 1.0,
         chunk_size: int = 4,
         weight_decay: float = 0.0,
     ) -> None:
@@ -38,6 +39,7 @@ class NestedAdam(torch.optim.Optimizer):
             beta=beta,
             eps=eps,
             alpha=alpha,
+            gamma=gamma,
             chunk_size=chunk_size,
             weight_decay=weight_decay,
         )
@@ -58,6 +60,7 @@ class NestedAdam(torch.optim.Optimizer):
             beta1, beta2 = group["beta"]
             eps = group["eps"]
             alpha = group["alpha"]
+            gamma = group["gamma"]
             chunk_size = group["chunk_size"]
             weight_decay = group["weight_decay"]
 
@@ -96,7 +99,7 @@ class NestedAdam(torch.optim.Optimizer):
                 v_buffer = state["v_buffer"]
 
                 # 1. Accumulate raw gradients and squared gradients into buffers
-                m_buffer.add_(grad)
+                m_buffer.mul_(gamma).add_(grad, alpha=(1.0 - gamma))
                 v_buffer.addcmul_(grad, grad)
 
                 # 2. Update macroscopic moments strictly at chunk boundaries
@@ -108,15 +111,18 @@ class NestedAdam(torch.optim.Optimizer):
                     scale = 1.0 / state["inner_step"]
                     
                     # Update Rule: m = beta1 * m + (1 - beta1) * (m_buffer * scale)
-                    m.mul_(beta1).add_(m_buffer, alpha=(1.0 - beta1) * scale)
+                    m.mul_(beta1).add_(m_buffer, alpha=(1.0 - beta1))
                     
                     # Update Rule: v = beta2 * v + (1 - beta2) * (v_buffer * scale)
-                    v.mul_(beta2).add_(v_buffer, alpha=(1.0 - beta2) * scale)
+                    # v.mul_(beta2).add_(v_buffer, alpha=(1.0 - beta2) * scale)
                     
                     # Reset buffers for the next chunk interval
                     m_buffer.zero_()
-                    v_buffer.zero_()
+                    # v_buffer.zero_()
                     state["inner_step"] = 0
+
+                v.mul_(beta2).add_(v_buffer, alpha=(1.0 - beta2))
+                v_buffer.zero_()
 
                 # 3. Bias Correction based on the number of macroscopic updates (chunk_step)
                 T = state["chunk_step"]
@@ -132,7 +138,7 @@ class NestedAdam(torch.optim.Optimizer):
                 denom = v_hat.sqrt().add_(eps)
                 
                 # update_direction = (grad + alpha * m_hat) / denom
-                update_direction = grad.add(m_hat, alpha=alpha).div_(denom)
+                update_direction = grad.mul(1.0 - alpha).add_(m_hat, alpha=alpha).div_(denom)
                 
                 p.add_(update_direction, alpha=-lr)
 

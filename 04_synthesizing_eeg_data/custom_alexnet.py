@@ -22,12 +22,12 @@ class CustomAlexNet(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
         self.classifier = nn.Sequential(
             nn.Dropout(p=0.5),
-            nn.Linear(256 * 6 * 6, 4096),
+            nn.Linear(256 * 6 * 6, 1024),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.5),
-            nn.Linear(4096, 4096),
+            nn.Linear(1024, 1024),
             nn.ReLU(inplace=True),
-            nn.Linear(4096, num_classes),
+            nn.Linear(1024, num_classes),
         )
 
     def forward(self, x):

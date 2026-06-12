@@ -30,6 +30,7 @@ def train_and_evaluate(
     model_type="gradient",
     max_epochs=200,
     patience=15,
+    log_file=None,
 ):
     model = CustomAlexNet(num_classes=out_features).to(device)
 
@@ -189,6 +190,10 @@ def train_and_evaluate(
             {"Val_Loss": f"{val_loss:.4f}", "Best": f"{best_val_loss:.4f}"}
         )
 
+        if log_file:
+            log_file.write(f"      Epoch {epoch + 1:03d} | Train Loss: {train_loss / len(train_dl):.4f} | Val Loss: {val_loss:.4f}\n")
+            log_file.flush()
+
         # Early Stopping Logic
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -215,7 +220,8 @@ if __name__ == "__main__":
     current_time = datetime.now()
     formatted_time = current_time.strftime("%Y_%m_%d_%H_%M_%S")
     log_file = f"{formatted_time}.log"
-    print(f"Tuning started. Results will be saved to: {log_file}")
+    detail_log_file = f"{formatted_time}_detail.log"
+    print(f"Tuning started. Results will be saved to: {log_file} and {detail_log_file}")
 
     # 2. Setup Data (Reusing your logic)
     class Args:
@@ -223,7 +229,7 @@ if __name__ == "__main__":
 
     args = Args()
     args.sub, args.modeled_time_points, args.project_dir = 1, "all", "project_directory"
-    args.model = "adam"
+    args.model = "adam+nested"
 
     # Seeds for reproducibility
     seed = 20200220
@@ -272,28 +278,37 @@ if __name__ == "__main__":
         }
     elif args.model == "adam+nested":
         hyperparameter_space = {
-            "lr": [1e-4, 5e-3],
+            "lr": [1e-3, 5e-3, 1e-4],
             "batch_size": [32, 64],
-            "betas": [(0.9, 0.999), (0.95, 0.999)],
+            "beta": [(0.9, 0.999), (0.95, 0.999)],
             "eps": [1e-8],
-            "alpha": [0.5, 0.9],
+            "alpha": [0.1, 0.5, 0.9],
+            "gamma": [0.1, 0.5],
             "weight_decay": [0.0, 1e-4],
-            "freeze_conv_base": [True, False],
-            "chunk_size": [10, 25, 50],
+            "freeze_conv_base": [False],
+            "chunk_size": [4, 10, 25],
             "freq": [(1, 2, 4), (1, 4, 8)],
         }
     grid = list(ParameterGrid(hyperparameter_space))
 
     # 4. Search Loop
-    with open(log_file, "w") as f:
+    with open(log_file, "w") as f, open(detail_log_file, "w") as fd:
         f.write(f">> {args.model} <<\n")
         f.write("-" * 50 + "\n")
+        
+        fd.write(f">> {args.model} <<\n")
+        fd.write("-" * 50 + "\n")
+        
         best_overall_loss = float("inf")
         best_overall_config = None  # Added tracking for the best configuration
 
         for idx, config in enumerate(grid):
             combo_str = f"[{idx+1}/{len(grid)}] Config: {config}"
             print(f"\n{combo_str}")
+            f.write(f"\n{combo_str}\n")
+            fd.write(f"\n{combo_str}\n")
+            f.flush()
+            fd.flush()
 
             # Create DataLoaders for this batch_size
             args.batch_size = config["batch_size"]
@@ -310,19 +325,24 @@ if __name__ == "__main__":
                 out_features,
                 combo_id=idx + 1,
                 model_type=args.model,
+                log_file=fd,
             )
 
             # Log results
-            log_entry = f"{combo_str}\n-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n"
-            f.write(log_entry)
+            f.write(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
+            fd.write(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
+            print(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})")
 
             if best_val < best_overall_loss:
                 best_overall_loss = best_val
                 best_overall_config = config  # Save the best configuration
                 f.write(">>> New Best Found! <<<\n")
+                fd.write(">>> New Best Found! <<<\n")
 
             f.write("\n")
+            fd.write("\n")
             f.flush()  # Ensure it writes to disk immediately
+            fd.flush()
 
         # 5. Final Statistics Summary
         summary_str = "=" * 50 + "\n"
@@ -337,3 +357,4 @@ if __name__ == "__main__":
         print(summary_str)
         # Write the final summary to the log file
         f.write(summary_str)
+        fd.write(summary_str)

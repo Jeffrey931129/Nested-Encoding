@@ -47,17 +47,18 @@ from deep_momentum import DeepMomentum
 from custom_alexnet import CustomAlexNet
 from m3 import M3
 from nested_sgd import NestedSGD
+from nested_adam import NestedAdam
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--sub", type=int, default=1)
 parser.add_argument("--modeled_time_points", type=str, default="all")
-parser.add_argument("--dnn", type=str, default="gradient+nested")
+parser.add_argument("--dnn", type=str, default="adam+nested")
 parser.add_argument("--pretrained", type=bool, default=True)
-parser.add_argument("--epochs", type=int, default=100)
+parser.add_argument("--epochs", type=int, default=200)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--weight_decay", type=float, default=0.0)
 parser.add_argument("--momentum", type=float, default=0.9)
-parser.add_argument("--batch_size", type=int, default=32)
+parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--save_trained_models", type=bool, default=False)
 parser.add_argument("--project_dir", default="project_directory", type=str)
 args = parser.parse_args()
@@ -143,21 +144,8 @@ for m in range(num_models):
     # =============================================================================
     # Load the DNN model and change the last layer to the amount of EEG features
     # =============================================================================
-    if args.dnn == "alexnet":
-        model = CustomAlexNet(num_classes=out_features)
-        print(model)
-    elif args.dnn == "alexnet+nested":
-        model = CustomAlexNet(num_classes=out_features)
-        print(model)
-    elif args.dnn == "gradient":
-        model = CustomAlexNet(num_classes=out_features)
-        print(model)
-    elif args.dnn == "gradient+nested":
-        model = CustomAlexNet(num_classes=out_features)
-        print(model)
-    else:
-        print("args.dnn is not supported")
-        exit()
+    model = CustomAlexNet(num_classes=out_features)
+    print(model)
     model.to(device)
 
     # =============================================================================
@@ -165,8 +153,8 @@ for m in range(num_models):
     # =============================================================================
     freq_fast = 1
     freq_mid = 1
-    freq_slow = 2
-    freq_super_slow = 4
+    freq_slow = 4
+    freq_super_slow = 16
 
     if args.dnn == "alexnet":
         params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
@@ -229,6 +217,53 @@ for m in range(num_models):
             momentum=0.95,
             alpha=0.9,
             chunk_size=1,
+        )
+    elif args.dnn == "adam":
+        params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
+        optimizer_fast = torch.optim.Adam(params_fast, lr=1e-05, weight_decay=1e-05)
+        optimizer_mid = None
+        optimizer_slow = None
+        optimizer_super_slow = None
+    elif args.dnn == "adam+nested":
+        params_fast = list(model.features.parameters())
+        optimizer_fast = NestedAdam(
+            params_fast, 
+            lr=0.00001, 
+            weight_decay=0.0001, 
+            beta=(0.9, 0.999),
+            alpha=0.1,
+            gamma=0.5,
+            chunk_size=4,
+        )
+        params_mid = list(model.classifier[1].parameters())
+        optimizer_mid = NestedAdam(
+            params_mid, 
+            lr=0.0001, 
+            weight_decay=0.0001, 
+            beta=(0.9, 0.999),
+            alpha=0.1,
+            gamma=0.5,
+            chunk_size=4,
+        )
+        params_slow = list(model.classifier[4].parameters())
+        optimizer_slow = NestedAdam(
+            params_slow, 
+            lr=0.0001, 
+            weight_decay=0.0001, 
+            beta=(0.9, 0.999),
+            alpha=0.1,
+            gamma=0.5,
+            chunk_size=4,
+        )
+        params_super_slow = list(model.classifier[6].parameters())
+        optimizer_super_slow = NestedAdam(
+            params_super_slow, 
+            lr=0.0001, 
+            weight_decay=0.0001, 
+            beta=(0.9, 0.999),
+            alpha=0.1,
+            gamma=0.5,
+            chunk_size=4,
         )
 
     loss_fn = torch.nn.MSELoss().to(device)
