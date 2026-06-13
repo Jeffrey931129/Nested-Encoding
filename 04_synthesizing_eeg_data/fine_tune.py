@@ -43,11 +43,11 @@ def train_and_evaluate(
         param_slow = [{"params": model.classifier[6].parameters()}]
     else:
         param_fast = [
-            {"params": model.features.parameters(), "lr": config["lr"] * 0.1},
-            {"params": model.classifier[1].parameters()},
+            {"params": model.features[0:4].parameters(), "lr": config["lr"] * 0.1},
+            {"params": model.classifier.parameters()},
         ]
-        param_mid = [{"params": model.classifier[4].parameters()}]
-        param_slow = [{"params": model.classifier[6].parameters()}]
+        param_mid = [{"params": model.features[4:9].parameters(), "lr": config["lr"] * 0.1}]
+        param_slow = [{"params": model.features[9:13].parameters(), "lr": config["lr"] * 0.1}]
 
     # Select optimizer based on model_type
     if model_type == "gradient":
@@ -279,11 +279,11 @@ if __name__ == "__main__":
     elif args.model == "adam+nested":
         hyperparameter_space = {
             "lr": [1e-3, 5e-3, 1e-4],
-            "batch_size": [32, 64],
-            "beta": [(0.9, 0.999), (0.95, 0.999)],
+            "batch_size": [32],
+            "beta": [(0.9, 0.999)],
             "eps": [1e-8],
             "alpha": [0.1, 0.5, 0.9],
-            "gamma": [0.1, 0.5],
+            "gamma": [0.1, 0.5, 0.9],
             "weight_decay": [0.0, 1e-4],
             "freeze_conv_base": [False],
             "chunk_size": [4, 10, 25],
