@@ -157,69 +157,96 @@ for m in range(num_models):
     freq_super_slow = 16
 
     if args.dnn == "alexnet":
-        params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
-        optimizer_fast = torch.optim.Adam(params_fast, lr=args.lr, weight_decay=args.weight_decay)
+        params_fast = list(model.features.parameters()) + list(
+            model.classifier.parameters()
+        )
+        optimizer_fast = torch.optim.Adam(
+            params_fast, lr=args.lr, weight_decay=args.weight_decay
+        )
         optimizer_mid = None
         optimizer_slow = None
         optimizer_super_slow = None
     elif args.dnn == "alexnet+nested":
         # 1. Fast Parameters
         params_fast = list(model.features.parameters())
-        optimizer_fast = torch.optim.Adam(params_fast, lr=args.lr, weight_decay=args.weight_decay)
+        optimizer_fast = torch.optim.Adam(
+            params_fast, lr=args.lr, weight_decay=args.weight_decay
+        )
         # 2. Mid Parameters
-        params_mid = list(model.classifier_block1.parameters()) + list(model.occipital_head.parameters())
-        optimizer_mid = DeepMomentum(params_mid, lr=args.lr, weight_decay=args.weight_decay)
+        params_mid = list(model.classifier_block1.parameters()) + list(
+            model.occipital_head.parameters()
+        )
+        optimizer_mid = DeepMomentum(
+            params_mid, lr=args.lr, weight_decay=args.weight_decay
+        )
         # 3. Slow Parameters
-        params_slow = list(model.classifier_block2.parameters()) + list(model.parieto_occipital_head.parameters())
-        optimizer_slow = DeepMomentum(params_slow, lr=args.lr, weight_decay=args.weight_decay)
+        params_slow = list(model.classifier_block2.parameters()) + list(
+            model.parieto_occipital_head.parameters()
+        )
+        optimizer_slow = DeepMomentum(
+            params_slow, lr=args.lr, weight_decay=args.weight_decay
+        )
         # 4. Super Slow Parameters
-        params_super_slow = list(model.classifier_block3.parameters()) + list(model.parietal_head.parameters())
-        optimizer_super_slow = DeepMomentum(params_super_slow, lr=args.lr, weight_decay=args.weight_decay)
+        params_super_slow = list(model.classifier_block3.parameters()) + list(
+            model.parietal_head.parameters()
+        )
+        optimizer_super_slow = DeepMomentum(
+            params_super_slow, lr=args.lr, weight_decay=args.weight_decay
+        )
     elif args.dnn == "gradient":
-        params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
-        optimizer_fast = torch.optim.SGD(params_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)
+        params_fast = list(model.features.parameters()) + list(
+            model.classifier.parameters()
+        )
+        optimizer_fast = torch.optim.SGD(
+            params_fast,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            momentum=args.momentum,
+        )
         optimizer_mid = None
         optimizer_slow = None
         optimizer_super_slow = None
     elif args.dnn == "gradient+nested":
         params_fast = list(model.features.parameters())
         optimizer_fast = NestedSGD(
-            params_fast, 
-            lr=0.0001, 
-            weight_decay=0, 
+            params_fast,
+            lr=0.0001,
+            weight_decay=0,
             momentum=0.95,
             alpha=0.9,
             chunk_size=1,
         )
         params_mid = list(model.classifier[1].parameters())
         optimizer_mid = NestedSGD(
-            params_mid, 
-            lr=0.001, 
-            weight_decay=0, 
+            params_mid,
+            lr=0.001,
+            weight_decay=0,
             momentum=0.95,
             alpha=0.9,
             chunk_size=1,
         )
         params_slow = list(model.classifier[4].parameters())
         optimizer_slow = NestedSGD(
-            params_slow, 
-            lr=0.001, 
-            weight_decay=0, 
+            params_slow,
+            lr=0.001,
+            weight_decay=0,
             momentum=0.95,
             alpha=0.9,
             chunk_size=1,
         )
         params_super_slow = list(model.classifier[6].parameters())
         optimizer_super_slow = NestedSGD(
-            params_super_slow, 
-            lr=0.001, 
-            weight_decay=0, 
+            params_super_slow,
+            lr=0.001,
+            weight_decay=0,
             momentum=0.95,
             alpha=0.9,
             chunk_size=1,
         )
     elif args.dnn == "adam":
-        params_fast = list(model.features.parameters()) + list(model.classifier.parameters())
+        params_fast = list(model.features.parameters()) + list(
+            model.classifier.parameters()
+        )
         optimizer_fast = torch.optim.Adam(params_fast, lr=1e-05, weight_decay=1e-05)
         optimizer_mid = None
         optimizer_slow = None
@@ -227,9 +254,9 @@ for m in range(num_models):
     elif args.dnn == "adam+nested":
         params_fast = list(model.features.parameters())
         optimizer_fast = NestedAdam(
-            params_fast, 
-            lr=0.00001, 
-            weight_decay=0.0001, 
+            params_fast,
+            lr=0.00001,
+            weight_decay=0.0001,
             beta=(0.9, 0.999),
             alpha=0.1,
             gamma=0.5,
@@ -237,9 +264,9 @@ for m in range(num_models):
         )
         params_mid = list(model.classifier[1].parameters())
         optimizer_mid = NestedAdam(
-            params_mid, 
-            lr=0.0001, 
-            weight_decay=0.0001, 
+            params_mid,
+            lr=0.0001,
+            weight_decay=0.0001,
             beta=(0.9, 0.999),
             alpha=0.1,
             gamma=0.5,
@@ -247,9 +274,9 @@ for m in range(num_models):
         )
         params_slow = list(model.classifier[4].parameters())
         optimizer_slow = NestedAdam(
-            params_slow, 
-            lr=0.0001, 
-            weight_decay=0.0001, 
+            params_slow,
+            lr=0.0001,
+            weight_decay=0.0001,
             beta=(0.9, 0.999),
             alpha=0.1,
             gamma=0.5,
@@ -257,9 +284,9 @@ for m in range(num_models):
         )
         params_super_slow = list(model.classifier[6].parameters())
         optimizer_super_slow = NestedAdam(
-            params_super_slow, 
-            lr=0.0001, 
-            weight_decay=0.0001, 
+            params_super_slow,
+            lr=0.0001,
+            weight_decay=0.0001,
             beta=(0.9, 0.999),
             alpha=0.1,
             gamma=0.5,
@@ -267,7 +294,7 @@ for m in range(num_models):
         )
 
     loss_fn = torch.nn.MSELoss().to(device)
-    scaler = torch.amp.GradScaler('cuda')
+    scaler = torch.amp.GradScaler("cuda")
 
     # Benchmark multiple convolution algorithms and select the fastest
     torch.backends.cudnn.benchmark = True
@@ -368,7 +395,7 @@ for m in range(num_models):
     # =============================================================================
     # Train the model and log the training statistics to TensorBoard
     # =============================================================================
-    best_val_loss = float('inf')
+    best_val_loss = float("inf")
 
     for e in tqdm(range(args.epochs)):
         # Train the model and train loss

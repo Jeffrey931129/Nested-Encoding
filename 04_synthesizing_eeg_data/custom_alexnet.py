@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+
 class CustomAlexNet(nn.Module):
     def __init__(self, num_classes):
         super(CustomAlexNet, self).__init__()
@@ -37,16 +38,17 @@ class CustomAlexNet(nn.Module):
         x = self.classifier(x)
         return x
 
+
 # Testing the model output and parameter shape
 if __name__ == "__main__":
     # Initialize the standard AlexNet architecture with 1700 output features
     model = CustomAlexNet(num_classes=1700)
-    
+
     # Create a dummy input tensor representing a single RGB image of 224x224
     dummy_input = torch.randn(1, 3, 224, 224)
-    
+
     # Forward pass
     output = model(dummy_input)
-    
+
     # Print output shape to verify (Expected: [1, 1700])
     print(f"Output tensor shape: {output.shape}")

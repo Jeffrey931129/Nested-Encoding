@@ -17,6 +17,7 @@ from end_to_end_encoding_utils import load_images
 from end_to_end_encoding_utils import load_eeg_data
 from end_to_end_encoding_utils import create_dataloader
 
+
 # =============================================================================
 # Core Training Function with Progress Bar and Early Stopping
 # =============================================================================
@@ -46,8 +47,12 @@ def train_and_evaluate(
             {"params": model.features[0:4].parameters(), "lr": config["lr"] * 0.1},
             {"params": model.classifier.parameters()},
         ]
-        param_mid = [{"params": model.features[4:9].parameters(), "lr": config["lr"] * 0.1}]
-        param_slow = [{"params": model.features[9:13].parameters(), "lr": config["lr"] * 0.1}]
+        param_mid = [
+            {"params": model.features[4:9].parameters(), "lr": config["lr"] * 0.1}
+        ]
+        param_slow = [
+            {"params": model.features[9:13].parameters(), "lr": config["lr"] * 0.1}
+        ]
 
     # Select optimizer based on model_type
     if model_type == "gradient":
@@ -191,7 +196,9 @@ def train_and_evaluate(
         )
 
         if log_file:
-            log_file.write(f"      Epoch {epoch + 1:03d} | Train Loss: {train_loss / len(train_dl):.4f} | Val Loss: {val_loss:.4f}\n")
+            log_file.write(
+                f"      Epoch {epoch + 1:03d} | Train Loss: {train_loss / len(train_dl):.4f} | Val Loss: {val_loss:.4f}\n"
+            )
             log_file.flush()
 
         # Early Stopping Logic
@@ -252,7 +259,7 @@ if __name__ == "__main__":
     # 3. Define Grid
     if args.model == "gradient":
         hyperparameter_space = {
-            "lr": [1e-3, 5e-4, 1e-4],  
+            "lr": [1e-3, 5e-4, 1e-4],
             "batch_size": [32, 64],
             "momentum": [0.9, 0.95],
             "weight_decay": [0, 1e-3, 1e-4],
@@ -271,7 +278,7 @@ if __name__ == "__main__":
         }
     elif args.model == "adam":
         hyperparameter_space = {
-            "lr": [1e-4, 5e-5, 1e-5],  
+            "lr": [1e-4, 5e-5, 1e-5],
             "batch_size": [32, 64],
             "weight_decay": [0, 1e-4, 1e-5],
             "freeze_conv_base": [True, False],
@@ -295,10 +302,10 @@ if __name__ == "__main__":
     with open(log_file, "w") as f, open(detail_log_file, "w") as fd:
         f.write(f">> {args.model} <<\n")
         f.write("-" * 50 + "\n")
-        
+
         fd.write(f">> {args.model} <<\n")
         fd.write("-" * 50 + "\n")
-        
+
         best_overall_loss = float("inf")
         best_overall_config = None  # Added tracking for the best configuration
 
@@ -329,8 +336,12 @@ if __name__ == "__main__":
             )
 
             # Log results
-            f.write(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
-            fd.write(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
+            f.write(
+                f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n"
+            )
+            fd.write(
+                f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n"
+            )
             print(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})")
 
             if best_val < best_overall_loss:

@@ -2,13 +2,14 @@ import math
 import torch
 from typing import Iterable, Tuple
 
+
 class NestedAdam(torch.optim.Optimizer):
     """
     A custom Adam optimizer with low-frequency, macroscopic moment updates.
-    
-    The first and second moments (m, v) are only updated every `chunk_size` steps 
-    using the average of the accumulated gradients within the chunk. 
-    Local parameter updates use the raw stochastic gradients combined with the 
+
+    The first and second moments (m, v) are only updated every `chunk_size` steps
+    using the average of the accumulated gradients within the chunk.
+    Local parameter updates use the raw stochastic gradients combined with the
     bias-corrected macroscopic moments.
     """
 
@@ -67,9 +68,9 @@ class NestedAdam(torch.optim.Optimizer):
             for p in group["params"]:
                 if p.grad is None:
                     continue
-                
+
                 grad = p.grad
-                
+
                 # Apply weight decay
                 if weight_decay != 0.0:
                     grad = grad.add(p, alpha=weight_decay)
@@ -81,18 +82,26 @@ class NestedAdam(torch.optim.Optimizer):
                     state["step"] = 0
                     state["inner_step"] = 0
                     state["chunk_step"] = 0
-                    
+
                     # Macroscopic moments (updated low-frequency)
-                    state["m"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    state["v"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    
+                    state["m"] = torch.zeros_like(
+                        p, memory_format=torch.preserve_format
+                    )
+                    state["v"] = torch.zeros_like(
+                        p, memory_format=torch.preserve_format
+                    )
+
                     # High-frequency accumulation buffers
-                    state["m_buffer"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    state["v_buffer"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                    state["m_buffer"] = torch.zeros_like(
+                        p, memory_format=torch.preserve_format
+                    )
+                    state["v_buffer"] = torch.zeros_like(
+                        p, memory_format=torch.preserve_format
+                    )
 
                 state["step"] += 1
                 state["inner_step"] += 1
-                
+
                 m = state["m"]
                 v = state["v"]
                 m_buffer = state["m_buffer"]
@@ -106,16 +115,16 @@ class NestedAdam(torch.optim.Optimizer):
                 # Note: We also trigger an update on step 1 to prevent division by zero (v=0)
                 if state["step"] == 1 or state["inner_step"] == chunk_size:
                     state["chunk_step"] += 1
-                    
+
                     # Calculate the mean over the accumulated inner steps to preserve EMA scale
                     scale = 1.0 / state["inner_step"]
-                    
+
                     # Update Rule: m = beta1 * m + (1 - beta1) * (m_buffer * scale)
                     m.mul_(beta1).add_(m_buffer, alpha=(1.0 - beta1))
-                    
+
                     # Update Rule: v = beta2 * v + (1 - beta2) * (v_buffer * scale)
                     # v.mul_(beta2).add_(v_buffer, alpha=(1.0 - beta2) * scale)
-                    
+
                     # Reset buffers for the next chunk interval
                     m_buffer.zero_()
                     # v_buffer.zero_()
@@ -126,9 +135,9 @@ class NestedAdam(torch.optim.Optimizer):
 
                 # 3. Bias Correction based on the number of macroscopic updates (chunk_step)
                 T = state["chunk_step"]
-                bias_correction1 = 1.0 - beta1 ** T
-                bias_correction2 = 1.0 - beta2 ** T
-                
+                bias_correction1 = 1.0 - beta1**T
+                bias_correction2 = 1.0 - beta2**T
+
                 m_hat = m / bias_correction1
                 v_hat = v / bias_correction2
 
@@ -136,10 +145,12 @@ class NestedAdam(torch.optim.Optimizer):
                 # Combines the immediate local gradient with the macroscopic momentum (m_hat),
                 # scaled by the macroscopic variance (v_hat) to maintain Adam's adaptive properties.
                 denom = v_hat.sqrt().add_(eps)
-                
+
                 # update_direction = (grad + alpha * m_hat) / denom
-                update_direction = grad.mul(1.0 - alpha).add_(m_hat, alpha=alpha).div_(denom)
-                
+                update_direction = (
+                    grad.mul(1.0 - alpha).add_(m_hat, alpha=alpha).div_(denom)
+                )
+
                 p.add_(update_direction, alpha=-lr)
 
         return loss

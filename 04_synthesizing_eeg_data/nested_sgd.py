@@ -1,12 +1,13 @@
 import torch
 from typing import Iterable
 
+
 class NestedSGD(torch.optim.Optimizer):
     """
     A custom SGD optimizer equipped only with a slow (macroscopic) momentum mechanism.
-    
-    The local updates strictly follow the raw stochastic gradients (Vanilla SGD), 
-    while a low-frequency momentum (m2) is updated every `chunk_size` steps to 
+
+    The local updates strictly follow the raw stochastic gradients (Vanilla SGD),
+    while a low-frequency momentum (m2) is updated every `chunk_size` steps to
     provide a macroscopic directional correction based on accumulated gradients.
     """
 
@@ -55,9 +56,9 @@ class NestedSGD(torch.optim.Optimizer):
             for p in group["params"]:
                 if p.grad is None:
                     continue
-                
+
                 grad = p.grad
-                
+
                 # Apply weight decay
                 if weight_decay != 0.0:
                     grad = grad.add(p, alpha=weight_decay)
@@ -71,7 +72,7 @@ class NestedSGD(torch.optim.Optimizer):
                     state["slow_buffer"] = torch.zeros_like(p)
 
                 state["step"] += 1
-                
+
                 m2 = state["m2"]
                 slow_buffer = state["slow_buffer"]
 
@@ -87,7 +88,7 @@ class NestedSGD(torch.optim.Optimizer):
                 if chunk_size > 0 and state["step"] % chunk_size == 0:
                     # Integrate the buffered gradients into the slow momentum
                     m2.mul_(beta).add_(slow_buffer)
-                    
+
                     # Reset the buffer for the next chunk interval
                     slow_buffer.zero_()
 
