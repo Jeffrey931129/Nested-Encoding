@@ -72,6 +72,7 @@ for key, val in vars(args).items():
 # =============================================================================
 # Set random seeds to make results reproducible and GPU
 # =============================================================================
+
 # Random seeds
 seed = 20200220
 torch.manual_seed(seed)
@@ -80,7 +81,6 @@ np.random.seed(seed)
 # Generator object for DataLoader random batching
 g_cpu = torch.Generator()
 g_cpu.manual_seed(seed)
-
 # Checking for GPU
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -118,348 +118,303 @@ y_train, y_val, y_test, ch_names, times = load_eeg_data(args, idx_val)
 
 # Define the amount of models which will be trained and the amount of their EEG
 # output features
-if args.modeled_time_points == "single":
-    num_models = y_test.shape[2]
-    out_features = y_test.shape[1]
-elif args.modeled_time_points == "all":
-    num_models = 1
-    out_features = y_test.shape[1] * y_test.shape[2]
+num_models = 1
+out_features = y_test.shape[1] * y_test.shape[2]
 
 # Snthetic EEG data matrix of shape:
 # (Test image conditions × EEG channels × EEG time points)
 synthetic_data = np.zeros((y_test.shape))
 best_epochs = np.zeros((num_models))
 
-# Loop across independent models
-for m in range(num_models):
-    print(f"\nModel: [{m+1}/{num_models}]")
+# =============================================================================
+# Create PyTorch-compatible Dataloaders
+# =============================================================================
+train_dl, val_dl, test_dl = create_dataloader(
+    args, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
+)
 
-    # =============================================================================
-    # Create PyTorch-compatible Dataloaders
-    # =============================================================================
-    train_dl, val_dl, test_dl = create_dataloader(
-        args, m, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
+# =============================================================================
+# Load the DNN model and change the last layer to the amount of EEG features
+# =============================================================================
+model = CustomAlexNet(num_classes=out_features)
+print(model)
+model.to(device)
+
+# =============================================================================
+# Define Optimizers for Different Frequencies (CMS Implementation)
+# =============================================================================
+freq_fast = 1
+freq_mid = 1
+freq_slow = 4
+freq_super_slow = 16
+
+if args.dnn == "gradient":
+    params_fast = list(model.features.parameters()) + list(
+        model.classifier.parameters()
+    )
+    optimizer_fast = torch.optim.SGD(
+        params_fast,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        momentum=args.momentum,
+    )
+    optimizer_mid = None
+    optimizer_slow = None
+    optimizer_super_slow = None
+elif args.dnn == "gradient+nested":
+    params_fast = list(model.features.parameters())
+    optimizer_fast = NestedSGD(
+        params_fast,
+        lr=0.0001,
+        weight_decay=0,
+        momentum=0.95,
+        alpha=0.9,
+        chunk_size=1,
+    )
+    params_mid = list(model.classifier[1].parameters())
+    optimizer_mid = NestedSGD(
+        params_mid,
+        lr=0.001,
+        weight_decay=0,
+        momentum=0.95,
+        alpha=0.9,
+        chunk_size=1,
+    )
+    params_slow = list(model.classifier[4].parameters())
+    optimizer_slow = NestedSGD(
+        params_slow,
+        lr=0.001,
+        weight_decay=0,
+        momentum=0.95,
+        alpha=0.9,
+        chunk_size=1,
+    )
+    params_super_slow = list(model.classifier[6].parameters())
+    optimizer_super_slow = NestedSGD(
+        params_super_slow,
+        lr=0.001,
+        weight_decay=0,
+        momentum=0.95,
+        alpha=0.9,
+        chunk_size=1,
+    )
+elif args.dnn == "adam":
+    params_fast = list(model.features.parameters()) + list(
+        model.classifier.parameters()
+    )
+    optimizer_fast = torch.optim.Adam(params_fast, lr=1e-05, weight_decay=1e-05)
+    optimizer_mid = None
+    optimizer_slow = None
+    optimizer_super_slow = None
+elif args.dnn == "adam+nested":
+    params_fast = list(model.features.parameters())
+    optimizer_fast = NestedAdam(
+        params_fast,
+        lr=0.00001,
+        weight_decay=0.0001,
+        beta=(0.9, 0.999),
+        alpha=0.1,
+        gamma=0.5,
+        chunk_size=4,
+    )
+    params_mid = list(model.classifier[1].parameters())
+    optimizer_mid = NestedAdam(
+        params_mid,
+        lr=0.0001,
+        weight_decay=0.0001,
+        beta=(0.9, 0.999),
+        alpha=0.1,
+        gamma=0.5,
+        chunk_size=4,
+    )
+    params_slow = list(model.classifier[4].parameters())
+    optimizer_slow = NestedAdam(
+        params_slow,
+        lr=0.0001,
+        weight_decay=0.0001,
+        beta=(0.9, 0.999),
+        alpha=0.1,
+        gamma=0.5,
+        chunk_size=4,
+    )
+    params_super_slow = list(model.classifier[6].parameters())
+    optimizer_super_slow = NestedAdam(
+        params_super_slow,
+        lr=0.0001,
+        weight_decay=0.0001,
+        beta=(0.9, 0.999),
+        alpha=0.1,
+        gamma=0.5,
+        chunk_size=4,
     )
 
-    # =============================================================================
-    # Load the DNN model and change the last layer to the amount of EEG features
-    # =============================================================================
-    model = CustomAlexNet(num_classes=out_features)
-    print(model)
-    model.to(device)
+loss_fn = torch.nn.MSELoss().to(device)
+scaler = torch.amp.GradScaler("cuda")
 
-    # =============================================================================
-    # Define Optimizers for Different Frequencies (CMS Implementation)
-    # =============================================================================
-    freq_fast = 1
-    freq_mid = 1
-    freq_slow = 4
-    freq_super_slow = 16
+# Benchmark multiple convolution algorithms and select the fastest
+torch.backends.cudnn.benchmark = True
 
-    if args.dnn == "alexnet":
-        params_fast = list(model.features.parameters()) + list(
-            model.classifier.parameters()
-        )
-        optimizer_fast = torch.optim.Adam(
-            params_fast, lr=args.lr, weight_decay=args.weight_decay
-        )
-        optimizer_mid = None
-        optimizer_slow = None
-        optimizer_super_slow = None
-    elif args.dnn == "alexnet+nested":
-        # 1. Fast Parameters
-        params_fast = list(model.features.parameters())
-        optimizer_fast = torch.optim.Adam(
-            params_fast, lr=args.lr, weight_decay=args.weight_decay
-        )
-        # 2. Mid Parameters
-        params_mid = list(model.classifier_block1.parameters()) + list(
-            model.occipital_head.parameters()
-        )
-        optimizer_mid = DeepMomentum(
-            params_mid, lr=args.lr, weight_decay=args.weight_decay
-        )
-        # 3. Slow Parameters
-        params_slow = list(model.classifier_block2.parameters()) + list(
-            model.parieto_occipital_head.parameters()
-        )
-        optimizer_slow = DeepMomentum(
-            params_slow, lr=args.lr, weight_decay=args.weight_decay
-        )
-        # 4. Super Slow Parameters
-        params_super_slow = list(model.classifier_block3.parameters()) + list(
-            model.parietal_head.parameters()
-        )
-        optimizer_super_slow = DeepMomentum(
-            params_super_slow, lr=args.lr, weight_decay=args.weight_decay
-        )
-    elif args.dnn == "gradient":
-        params_fast = list(model.features.parameters()) + list(
-            model.classifier.parameters()
-        )
-        optimizer_fast = torch.optim.SGD(
-            params_fast,
-            lr=args.lr,
-            weight_decay=args.weight_decay,
-            momentum=args.momentum,
-        )
-        optimizer_mid = None
-        optimizer_slow = None
-        optimizer_super_slow = None
-    elif args.dnn == "gradient+nested":
-        params_fast = list(model.features.parameters())
-        optimizer_fast = NestedSGD(
-            params_fast,
-            lr=0.0001,
-            weight_decay=0,
-            momentum=0.95,
-            alpha=0.9,
-            chunk_size=1,
-        )
-        params_mid = list(model.classifier[1].parameters())
-        optimizer_mid = NestedSGD(
-            params_mid,
-            lr=0.001,
-            weight_decay=0,
-            momentum=0.95,
-            alpha=0.9,
-            chunk_size=1,
-        )
-        params_slow = list(model.classifier[4].parameters())
-        optimizer_slow = NestedSGD(
-            params_slow,
-            lr=0.001,
-            weight_decay=0,
-            momentum=0.95,
-            alpha=0.9,
-            chunk_size=1,
-        )
-        params_super_slow = list(model.classifier[6].parameters())
-        optimizer_super_slow = NestedSGD(
-            params_super_slow,
-            lr=0.001,
-            weight_decay=0,
-            momentum=0.95,
-            alpha=0.9,
-            chunk_size=1,
-        )
-    elif args.dnn == "adam":
-        params_fast = list(model.features.parameters()) + list(
-            model.classifier.parameters()
-        )
-        optimizer_fast = torch.optim.Adam(params_fast, lr=1e-05, weight_decay=1e-05)
-        optimizer_mid = None
-        optimizer_slow = None
-        optimizer_super_slow = None
-    elif args.dnn == "adam+nested":
-        params_fast = list(model.features.parameters())
-        optimizer_fast = NestedAdam(
-            params_fast,
-            lr=0.00001,
-            weight_decay=0.0001,
-            beta=(0.9, 0.999),
-            alpha=0.1,
-            gamma=0.5,
-            chunk_size=4,
-        )
-        params_mid = list(model.classifier[1].parameters())
-        optimizer_mid = NestedAdam(
-            params_mid,
-            lr=0.0001,
-            weight_decay=0.0001,
-            beta=(0.9, 0.999),
-            alpha=0.1,
-            gamma=0.5,
-            chunk_size=4,
-        )
-        params_slow = list(model.classifier[4].parameters())
-        optimizer_slow = NestedAdam(
-            params_slow,
-            lr=0.0001,
-            weight_decay=0.0001,
-            beta=(0.9, 0.999),
-            alpha=0.1,
-            gamma=0.5,
-            chunk_size=4,
-        )
-        params_super_slow = list(model.classifier[6].parameters())
-        optimizer_super_slow = NestedAdam(
-            params_super_slow,
-            lr=0.0001,
-            weight_decay=0.0001,
-            beta=(0.9, 0.999),
-            alpha=0.1,
-            gamma=0.5,
-            chunk_size=4,
-        )
+save_dir = os.path.join(
+    args.project_dir,
+    "results",
+    "sub-" + format(args.sub, "02"),
+    "synthetic_eeg_data",
+    "encoding-end_to_end",
+    "dnn-" + args.dnn,
+    "modeled_time_points-" + args.modeled_time_points,
+    "pretrained-" + str(args.pretrained),
+    "lr-{:.0e}".format(args.lr)
+    + "__wd-{:.0e}".format(args.weight_decay)
+    + "__bs-"
+    + format(args.batch_size, "03"),
+)
+save_dir = os.path.abspath(save_dir)
+if isinstance(save_dir, bytes):
+    save_dir = save_dir.decode("utf-8")
+if not os.path.exists(save_dir):
+    os.makedirs(save_dir)
+writer = SummaryWriter(save_dir)
 
-    loss_fn = torch.nn.MSELoss().to(device)
-    scaler = torch.amp.GradScaler("cuda")
 
-    # Benchmark multiple convolution algorithms and select the fastest
-    torch.backends.cudnn.benchmark = True
+# =============================================================================
+# Training and validation loops
+# =============================================================================
+def train_loop(train_dl, model, loss_fn, optimizers, frequencies, current_epoch):
+    opt_fast, opt_mid, opt_slow, opt_super_slow = optimizers
+    f_fast, f_mid, f_slow, f_super_slow = frequencies
 
-    save_dir = os.path.join(
-        args.project_dir,
-        "results",
-        "sub-" + format(args.sub, "02"),
-        "synthetic_eeg_data",
-        "encoding-end_to_end",
-        "dnn-" + args.dnn,
-        "modeled_time_points-" + args.modeled_time_points,
-        "pretrained-" + str(args.pretrained),
-        "lr-{:.0e}".format(args.lr)
-        + "__wd-{:.0e}".format(args.weight_decay)
-        + "__bs-"
-        + format(args.batch_size, "03"),
-    )
-    save_dir = os.path.abspath(save_dir)
-    if isinstance(save_dir, bytes):
-        save_dir = save_dir.decode("utf-8")
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    writer = SummaryWriter(save_dir)
+    tot_loss = 0
+    model.train()
 
-    # =============================================================================
-    # Training and validation loops
-    # =============================================================================
-    def train_loop(train_dl, model, loss_fn, optimizers, frequencies, current_epoch):
-        opt_fast, opt_mid, opt_slow, opt_super_slow = optimizers
-        f_fast, f_mid, f_slow, f_super_slow = frequencies
+    # 我們需要一個全域計步器來計算頻率
+    # 簡單起見，我們在這裡用 batch_idx 累加
+    global_step_offset = current_epoch * len(train_dl)
 
-        tot_loss = 0
-        model.train()
+    for batch_idx, (X, y) in enumerate(train_dl):
+        current_step = global_step_offset + batch_idx + 1
 
-        # 我們需要一個全域計步器來計算頻率
-        # 簡單起見，我們在這裡用 batch_idx 累加
-        global_step_offset = current_epoch * len(train_dl)
+        X = X.to(device)
+        y = y.to(device)
 
-        for batch_idx, (X, y) in enumerate(train_dl):
-            current_step = global_step_offset + batch_idx + 1
+        # 1. Forward Pass & Loss Calculation
+        with torch.autocast(device_type="cuda", dtype=torch.float16):
+            y_pred = model(X).squeeze()
+            loss = loss_fn(y_pred, y)
 
+        # 2. Backward Pass (Accumulate Gradients)
+        scaler.scale(loss).backward()
+
+        # 3. Conditional Update based on Frequency
+
+        # === Fast Layer Update (Always) ===
+        if current_step % f_fast == 0:
+            scaler.step(opt_fast)
+            opt_fast.zero_grad()
+
+        # === Mid Layer Update ===
+        if opt_mid is not None and current_step % f_mid == 0:
+            scaler.step(opt_mid)
+            opt_mid.zero_grad()
+
+        # === Slow Layer Update ===
+        if opt_slow is not None and current_step % f_slow == 0:
+            scaler.step(opt_slow)
+            opt_slow.zero_grad()
+
+        # === Super Slow Layer Update ===
+        if opt_super_slow is not None and current_step % f_super_slow == 0:
+            scaler.step(opt_super_slow)
+            opt_super_slow.zero_grad()
+
+        # === Update Scaler ONCE at the end ===
+        scaler.update()
+
+        tot_loss += loss.item() * len(X)
+    tot_loss /= len(train_dl.dataset)
+    return tot_loss
+
+
+def val_loop(val_dl, model, loss_fn):
+    tot_loss = 0
+    model.eval()
+    with torch.no_grad():
+        for X, y in val_dl:
+            # Prediction and loss
             X = X.to(device)
             y = y.to(device)
-
-            # 1. Forward Pass & Loss Calculation
             with torch.autocast(device_type="cuda", dtype=torch.float16):
                 y_pred = model(X).squeeze()
                 loss = loss_fn(y_pred, y)
-
-            # 2. Backward Pass (Accumulate Gradients)
-            scaler.scale(loss).backward()
-
-            # 3. Conditional Update based on Frequency
-
-            # === Fast Layer Update (Always) ===
-            if current_step % f_fast == 0:
-                scaler.step(opt_fast)
-                opt_fast.zero_grad()
-
-            # === Mid Layer Update ===
-            if opt_mid is not None and current_step % f_mid == 0:
-                scaler.step(opt_mid)
-                opt_mid.zero_grad()
-
-            # === Slow Layer Update ===
-            if opt_slow is not None and current_step % f_slow == 0:
-                scaler.step(opt_slow)
-                opt_slow.zero_grad()
-
-            # === Super Slow Layer Update ===
-            if opt_super_slow is not None and current_step % f_super_slow == 0:
-                scaler.step(opt_super_slow)
-                opt_super_slow.zero_grad()
-
-            # === Update Scaler ONCE at the end ===
-            scaler.update()
-
             tot_loss += loss.item() * len(X)
-        tot_loss /= len(train_dl.dataset)
-        return tot_loss
+        tot_loss /= len(val_dl.dataset)
+    return tot_loss
 
-    def val_loop(val_dl, model, loss_fn):
-        tot_loss = 0
-        model.eval()
-        with torch.no_grad():
-            for X, y in val_dl:
-                # Prediction and loss
-                X = X.to(device)
-                y = y.to(device)
-                with torch.autocast(device_type="cuda", dtype=torch.float16):
-                    y_pred = model(X).squeeze()
-                    loss = loss_fn(y_pred, y)
-                tot_loss += loss.item() * len(X)
-            tot_loss /= len(val_dl.dataset)
-        return tot_loss
 
-    # =============================================================================
-    # Train the model and log the training statistics to TensorBoard
-    # =============================================================================
-    best_val_loss = float("inf")
+# =============================================================================
+# Train the model and log the training statistics to TensorBoard
+# =============================================================================
+best_val_loss = float("inf")
 
-    for e in tqdm(range(args.epochs)):
-        # Train the model and train loss
-        train_loss = train_loop(
-            train_dl,
-            model,
-            loss_fn,
-            [optimizer_fast, optimizer_mid, optimizer_slow, optimizer_super_slow],
-            [freq_fast, freq_mid, freq_slow, freq_super_slow],
-            e,
-        )
-        # Validation loss
-        val_loss = val_loop(val_dl, model, loss_fn)
-        # Add the training stats to TensorBoard
-        writer.add_scalars("Loss", {"train": train_loss, "val": val_loss}, e + 1)
-        writer.flush()
-        # Retain the best epoch model according to the validation loss
-        if val_loss < best_val_loss:
-            best_model = deepcopy(model)
-            best_epochs[m] = e + 1
-            best_val_loss = val_loss
-    print(f"Best Epochs: {best_epochs[m]}, Best Loss: {best_val_loss:.4f}")
+for e in tqdm(range(args.epochs)):
+    # Train the model and train loss
+    train_loss = train_loop(
+        train_dl,
+        model,
+        loss_fn,
+        [optimizer_fast, optimizer_mid, optimizer_slow, optimizer_super_slow],
+        [freq_fast, freq_mid, freq_slow, freq_super_slow],
+        e,
+    )
+    # Validation loss
+    val_loss = val_loop(val_dl, model, loss_fn)
+    # Add the training stats to TensorBoard
+    writer.add_scalars("Loss", {"train": train_loss, "val": val_loss}, e + 1)
+    writer.flush()
+    # Retain the best epoch model according to the validation loss
+    if val_loss < best_val_loss:
+        best_model = deepcopy(model)
+        best_epochs[0] = e + 1
+        best_val_loss = val_loss
+print(f"Best Epochs: {best_epochs[0]}, Best Loss: {best_val_loss:.4f}")
 
-    # Delete the model from GPU memory
-    del model
-    if device == "cuda":
-        torch.cuda.empty_cache()
+# Delete the model from GPU memory
+del model
+if device == "cuda":
+    torch.cuda.empty_cache()
 
-    # =============================================================================
-    # Synthesize the EEG test data using the best model
-    # =============================================================================
-    best_model.to(device)
-    best_model.eval()
-    with torch.no_grad():
-        for X, y in test_dl:
-            X = X.to(device)
-            y = y.to(device)
-            if args.modeled_time_points == "single":
-                synthetic_data[:, :, m] = best_model(X).detach().cpu().numpy()
-            elif args.modeled_time_points == "all":
-                synthetic_data = np.reshape(
-                    best_model(X).detach().cpu().numpy(), (synthetic_data.shape)
-                )
-
-    # =============================================================================
-    # Save the best model
-    # =============================================================================
-    if args.save_trained_models == True:
-        file_name = "model_state_dict.pt"
-        best_model = best_model.to("cpu")
-        torch.save(
-            {
-                "args": args,
-                "best_model": best_model.state_dict(),
-                "out_features": out_features,
-                "epoch": best_epochs[m],
-            },
-            os.path.join(save_dir, file_name),
+# =============================================================================
+# Synthesize the EEG test data using the best model
+# =============================================================================
+best_model.to(device)
+best_model.eval()
+with torch.no_grad():
+    for X, y in test_dl:
+        X = X.to(device)
+        y = y.to(device)
+        synthetic_data = np.reshape(
+            best_model(X).detach().cpu().numpy(), (synthetic_data.shape)
         )
 
-    # Delete the model from GPU memory
-    del best_model
-    if device == "cuda":
-        torch.cuda.empty_cache()
+# =============================================================================
+# Save the best model
+# =============================================================================
+if args.save_trained_models == True:
+    file_name = "model_state_dict.pt"
+    best_model = best_model.to("cpu")
+    torch.save(
+        {
+            "args": args,
+            "best_model": best_model.state_dict(),
+            "out_features": out_features,
+            "epoch": best_epochs[0],
+        },
+        os.path.join(save_dir, file_name),
+    )
+
+# Delete the model from GPU memory
+del best_model
+if device == "cuda":
+    torch.cuda.empty_cache()
 
 
 # =============================================================================
@@ -468,10 +423,7 @@ for m in range(num_models):
 # Put the synthesized data into a dictionary for compatibility with the
 # linearizing encoding synthetic data
 synthetic_data_dict = {}
-if args.modeled_time_points == "single":
-    synthetic_data_dict["single_time_points"] = synthetic_data
-if args.modeled_time_points == "all":
-    synthetic_data_dict["all_time_points"] = synthetic_data
+synthetic_data_dict["all_time_points"] = synthetic_data
 
 modeling_results = {
     "synthetic_data": synthetic_data_dict,
