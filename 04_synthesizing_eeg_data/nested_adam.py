@@ -17,10 +17,9 @@ class NestedAdam(torch.optim.Optimizer):
         self,
         params: Iterable[torch.nn.Parameter],
         lr: float = 1e-3,
+        alpha: float = 1.0,
         beta: Tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
-        alpha: float = 1.0,
-        gamma: float = 1.0,
         chunk_size: int = 4,
         weight_decay: float = 0.0,
     ) -> None:
@@ -37,10 +36,9 @@ class NestedAdam(torch.optim.Optimizer):
 
         defaults = dict(
             lr=lr,
+            alpha=alpha,
             beta=beta,
             eps=eps,
-            alpha=alpha,
-            gamma=gamma,
             chunk_size=chunk_size,
             weight_decay=weight_decay,
         )
@@ -58,10 +56,9 @@ class NestedAdam(torch.optim.Optimizer):
 
         for group in self.param_groups:
             lr = group["lr"]
+            alpha = group["alpha"]
             beta1, beta2 = group["beta"]
             eps = group["eps"]
-            alpha = group["alpha"]
-            gamma = group["gamma"]
             chunk_size = group["chunk_size"]
             weight_decay = group["weight_decay"]
 
@@ -108,16 +105,13 @@ class NestedAdam(torch.optim.Optimizer):
                 v_buffer = state["v_buffer"]
 
                 # 1. Accumulate raw gradients and squared gradients into buffers
-                m_buffer.mul_(gamma).add_(grad, alpha=(1.0 - gamma))
+                m_buffer.mul_(alpha).add_(grad, alpha=(1.0 - alpha))
                 v_buffer.addcmul_(grad, grad)
 
                 # 2. Update macroscopic moments strictly at chunk boundaries
                 # Note: We also trigger an update on step 1 to prevent division by zero (v=0)
                 if state["step"] == 1 or state["inner_step"] == chunk_size:
                     state["chunk_step"] += 1
-
-                    # Calculate the mean over the accumulated inner steps to preserve EMA scale
-                    scale = 1.0 / state["inner_step"]
 
                     # Update Rule: m = beta1 * m + (1 - beta1) * (m_buffer * scale)
                     m.mul_(beta1).add_(m_buffer, alpha=(1.0 - beta1))

@@ -1,4 +1,3 @@
-import argparse
 import os
 import numpy as np
 import random
@@ -10,12 +9,27 @@ from sklearn.model_selection import ParameterGrid
 from sklearn.utils import resample
 from nested_sgd import NestedSGD
 from nested_adam import NestedAdam
-from custom_alexnet import CustomAlexNet
+from custom_model import CustomModel
 
 # Import your custom utilities
 from end_to_end_encoding_utils import load_images
 from end_to_end_encoding_utils import load_eeg_data
 from end_to_end_encoding_utils import create_dataloader
+
+
+# =============================================================================
+# Configuration Class
+# =============================================================================
+class Args:
+    def __init__(self):
+        # Core defaults
+        self.sub = 1
+        self.modeled_time_points = "all"
+        self.model = "adam+nested"  
+        self.batch_size = 32
+        
+        # I/O arguments
+        self.project_dir = "project_directory"
 
 
 # =============================================================================
@@ -26,33 +40,31 @@ def train_and_evaluate(
     train_dl,
     val_dl,
     device,
-    out_features,
+    eeg_channels,
+    eeg_time_points,
     combo_id,
     model_type="gradient",
     max_epochs=200,
     patience=15,
     log_file=None,
 ):
-    model = CustomAlexNet(num_classes=out_features).to(device)
+    model = CustomModel(num_channels=eeg_channels, time_points=eeg_time_points, hidden_dim=512, num_layers=3).to(device)
 
-    # Configure parameter groups based on freezing strategy
-    if config["freeze_conv_base"]:
-        for param in model.features.parameters():
-            param.requires_grad = False
-        param_fast = [{"params": model.classifier[1].parameters()}]
-        param_mid = [{"params": model.classifier[4].parameters()}]
-        param_slow = [{"params": model.classifier[6].parameters()}]
-    else:
-        param_fast = [
-            {"params": model.features[0:4].parameters(), "lr": config["lr"] * 0.1},
-            {"params": model.classifier.parameters()},
-        ]
-        param_mid = [
-            {"params": model.features[4:9].parameters(), "lr": config["lr"] * 0.1}
-        ]
-        param_slow = [
-            {"params": model.features[9:13].parameters(), "lr": config["lr"] * 0.1}
-        ]
+    # Configure parameter groups
+    param_fast = [
+        {"params": model.features[0:4].parameters(), "lr": config["lr"] * 0.1},
+        {"params": model.feature_projection.parameters(), "lr": config["lr"]},
+        {"params": model.lstm_layers[2].parameters(), "lr": config["lr"]},
+        {"params": model.channel_decoder.parameters(), "lr": config["lr"]},
+    ]
+    param_mid = [
+        {"params": model.features[4:9].parameters(), "lr": config["lr"] * 0.1},
+        {"params": model.lstm_layers[1].parameters(), "lr": config["lr"]},
+    ]
+    param_slow = [
+        {"params": model.features[9:13].parameters(), "lr": config["lr"] * 0.1},
+        {"params": model.lstm_layers[0].parameters(), "lr": config["lr"]},
+    ]
 
     # Select optimizer based on model_type
     if model_type == "gradient":
@@ -231,12 +243,7 @@ if __name__ == "__main__":
     print(f"Tuning started. Results will be saved to: {log_file} and {detail_log_file}")
 
     # 2. Setup Data (Reusing your logic)
-    class Args:
-        pass
-
     args = Args()
-    args.sub, args.modeled_time_points, args.project_dir = 1, "all", "project_directory"
-    args.model = "adam+nested"
 
     # Seeds for reproducibility
     seed = 20200220
@@ -254,7 +261,8 @@ if __name__ == "__main__":
 
     X_train, X_val, X_test = load_images(args, idx_val)
     y_train, y_val, y_test, _, _ = load_eeg_data(args, idx_val)
-    out_features = y_test.shape[1] * y_test.shape[2]
+    eeg_channels = y_test.shape[1]
+    eeg_time_points = y_test.shape[2]
 
     # 3. Define Grid
     if args.model == "gradient":
@@ -281,20 +289,17 @@ if __name__ == "__main__":
             "lr": [1e-4, 5e-5, 1e-5],
             "batch_size": [32, 64],
             "weight_decay": [0, 1e-4, 1e-5],
-            "freeze_conv_base": [True, False],
         }
     elif args.model == "adam+nested":
         hyperparameter_space = {
-            "lr": [1e-3, 5e-3, 1e-4],
-            "batch_size": [32],
+            "lr": [1e-3, 1e-4, 1e-5],
+            "batch_size": [32, 64],
+            "alpha": [0.1, 0.5, 0.9],
             "beta": [(0.9, 0.999)],
             "eps": [1e-8],
-            "alpha": [0.1, 0.5, 0.9],
-            "gamma": [0.1, 0.5, 0.9],
-            "weight_decay": [0.0, 1e-4],
-            "freeze_conv_base": [False],
             "chunk_size": [4, 10, 25],
-            "freq": [(1, 2, 4), (1, 4, 8)],
+            "freq": [(1, 1, 1), (1, 2, 4), (1, 4, 8)],
+            "weight_decay": [0.0, 1e-4],
         }
     grid = list(ParameterGrid(hyperparameter_space))
 
@@ -329,7 +334,8 @@ if __name__ == "__main__":
                 train_dl,
                 val_dl,
                 device,
-                out_features,
+                eeg_channels,
+                eeg_time_points,
                 combo_id=idx + 1,
                 model_type=args.model,
                 log_file=fd,

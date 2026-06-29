@@ -20,7 +20,7 @@ from statsmodels.stats.multitest import multipletests
 
 # Local utility imports
 from end_to_end_encoding_utils import load_images, load_eeg_data, create_dataloader
-from custom_alexnet import CustomAlexNet
+from custom_model import CustomModel
 from nested_sgd import NestedSGD
 from nested_adam import NestedAdam
 
@@ -32,17 +32,16 @@ class Args:
         # Core modeling arguments
         self.sub = 1
         self.modeled_time_points = "all"
-        self.dnn = "adam+nested"
+        self.dnn = "adam"
         self.pretrained = True
         self.epochs = 200
-        self.lr = 0.001
+        self.lr = 0.0001
         self.weight_decay = 0.0
         self.momentum = 0.9
         
         # Nested optimizer specific arguments
         self.alpha = 0.9
         self.beta = (0.9, 0.999)  # Natively defined as a tuple
-        self.gamma = 0.1
         self.chunk_size = 10
         self.batch_size = 32
         
@@ -94,6 +93,9 @@ def main():
     # 3. Model Initialization
     # =============================================================================
     num_models = 1
+    eeg_channels = y_test.shape[1]
+    eeg_time_points = y_test.shape[2]
+    # print(f"EEG Channel: {eeg_channels}, EEG Time Point: {eeg_time_points}")
     out_features = y_test.shape[1] * y_test.shape[2]
     synthetic_data = np.zeros((y_test.shape))
     best_epochs = np.zeros((num_models))
@@ -102,7 +104,7 @@ def main():
         args, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
     )
 
-    model = CustomAlexNet(num_classes=out_features)
+    model = CustomModel(num_channels=eeg_channels, time_points=eeg_time_points, hidden_dim=512, num_layers=3)
     # print(model)
     model.to(device)
 
@@ -112,16 +114,12 @@ def main():
 
     param_fast = [
         {"params": model.features[0:4].parameters(), "lr": args.lr * 0.1},
-        {"params": model.classifier[6].parameters()},
+        {"params": model.feature_projection.parameters(), "lr": args.lr},
+        {"params": model.lstm_layers.parameters(), "lr": args.lr},
+        {"params": model.channel_decoder.parameters(), "lr": args.lr},
     ]
-    param_mid = [
-        {"params": model.features[4:9].parameters(), "lr": args.lr * 0.1},
-        {"params": model.classifier[4].parameters()},
-    ]
-    param_slow = [
-        {"params": model.features[9:13].parameters(), "lr": args.lr * 0.1},
-        {"params": model.classifier[1].parameters()},
-    ]
+    param_mid = None
+    param_slow = None
 
     if args.dnn == "gradient":
         opt_fast = torch.optim.SGD(param_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)
@@ -134,9 +132,9 @@ def main():
         opt_fast = torch.optim.Adam(param_fast, lr=args.lr, weight_decay=args.weight_decay)
         opt_mid, opt_slow = None, None
     elif args.dnn == "adam+nested":
-        opt_fast = NestedAdam(param_fast, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, gamma=args.gamma, chunk_size=args.chunk_size)
-        opt_mid = NestedAdam(param_mid, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, gamma=args.gamma, chunk_size=args.chunk_size)
-        opt_slow = NestedAdam(param_slow, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, gamma=args.gamma, chunk_size=args.chunk_size)
+        opt_fast = NestedAdam(param_fast, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=args.chunk_size)
+        opt_mid = NestedAdam(param_mid, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=args.chunk_size)
+        opt_slow = NestedAdam(param_slow, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=args.chunk_size)
 
     loss_fn = torch.nn.MSELoss().to(device)
     scaler = torch.amp.GradScaler("cuda")
