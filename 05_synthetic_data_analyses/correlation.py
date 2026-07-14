@@ -134,19 +134,15 @@ synt_test = synt_test["synthetic_data"]
 # =============================================================================
 # Compute the correlation and noise ceiling
 # =============================================================================
-# Results and noise ceiling matrices of shape:
-# (Iterations × EEG channels × EEG time points)
 correlation = {}
 for layer in synt_test.keys():
     correlation[layer] = np.zeros((args.n_iter, bio_test.shape[2], bio_test.shape[3]))
-noise_ceiling_low = np.zeros((args.n_iter, bio_test.shape[2], bio_test.shape[3]))
-noise_ceiling_up = np.zeros((args.n_iter, bio_test.shape[2], bio_test.shape[3]))
 
-# Average across all the biological data repetitions for the noise ceiling
-# upper bound calculation
+# Average across all the biological data repetitions
 bio_data_avg_all = np.mean(bio_test, 1)
 
-# Loop over iterations
+print("Computing model correlations against half average data...")
+# Loop over iterations for model correlation
 for i in tqdm(range(args.n_iter)):
     # Random data repetitions index
     shuffle_idx = resample(
@@ -156,30 +152,62 @@ for i in tqdm(range(args.n_iter)):
     )
     # Average across one half of the biological data repetitions
     bio_data_avg_half_1 = np.mean(np.delete(bio_test, shuffle_idx, 1), 1)
-    # Average across the other half of the biological data repetitions for the
-    # noise ceiling lower bound calculation
-    bio_data_avg_half_2 = np.mean(bio_test[:, shuffle_idx, :, :], 1)
 
     # Loop over EEG time points and channels
     for t in range(bio_test.shape[3]):
         for c in range(bio_test.shape[2]):
-            # Compute the correlation and noise ceiling
             for layer in synt_test.keys():
                 correlation[layer][i, c, t] = corr(
                     synt_test[layer][:, c, t], bio_data_avg_half_1[:, c, t]
                 )[0]
-            noise_ceiling_low[i, c, t] = corr(
-                bio_data_avg_half_2[:, c, t], bio_data_avg_half_1[:, c, t]
-            )[0]
-            noise_ceiling_up[i, c, t] = corr(
-                bio_data_avg_all[:, c, t], bio_data_avg_half_1[:, c, t]
-            )[0]
 
 # Average the results across iterations
 for layer in synt_test.keys():
     correlation[layer] = np.mean(correlation[layer], 0)
-noise_ceiling_low = np.mean(noise_ceiling_low, 0)
-noise_ceiling_up = np.mean(noise_ceiling_up, 0)
+
+# =============================================================================
+# Split-Half Reliability for Noise Ceiling with Caching
+# =============================================================================
+nc_cache_dir = os.path.join(args.project_dir, "results", f"sub-{args.sub:02d}", "correlation_bound")
+nc_cache_path = os.path.join(nc_cache_dir, f"{args.n_iter}.npy")
+
+if os.path.exists(nc_cache_path):
+    print(f"Loading cached noise ceiling bounds from {nc_cache_path}...")
+    nc_cache_data = np.load(nc_cache_path, allow_pickle=True).item()
+    noise_ceiling_low = nc_cache_data["noise_ceiling_low"]
+    noise_ceiling_up = nc_cache_data["noise_ceiling_up"]
+else:
+    print("Estimating split-half reliability for noise ceiling...")
+    noise_ceiling_low_splits = np.zeros((args.n_iter, bio_test.shape[2], bio_test.shape[3]))
+    for i in tqdm(range(args.n_iter)):
+        shuffle_idx = resample(np.arange(0, bio_test.shape[1]), replace=False, n_samples=int(bio_test.shape[1] / 2))
+        bio_data_avg_half_1 = np.mean(np.delete(bio_test, shuffle_idx, 1), 1)
+        bio_data_avg_half_2 = np.mean(bio_test[:, shuffle_idx, :, :], 1)
+
+        for t in range(bio_test.shape[3]):
+            for c in range(bio_test.shape[2]):
+                noise_ceiling_low_splits[i, c, t] = corr(bio_data_avg_half_2[:, c, t], bio_data_avg_half_1[:, c, t])[0]
+
+    # Helper function for Fisher Z-transform averaging
+    def fisher_z_mean(corrs):
+        corrs = np.clip(corrs, -1 + 1e-7, 1 - 1e-7)
+        return np.tanh(np.mean(np.arctanh(corrs), axis=0))
+
+    # Average split-half reliability across iterations using Fisher Z
+    noise_ceiling_low = fisher_z_mean(noise_ceiling_low_splits)
+
+    # Apply Spearman-Brown formula to estimate full data reliability
+    noise_ceiling_low = 2 * noise_ceiling_low / (1 + noise_ceiling_low)
+
+    # Theoretical upper bound for full data is the square root of its reliability
+    noise_ceiling_up = np.sqrt(np.clip(noise_ceiling_low, 0, None))
+    
+    os.makedirs(nc_cache_dir, exist_ok=True)
+    np.save(nc_cache_path, {
+        "noise_ceiling_low": noise_ceiling_low,
+        "noise_ceiling_up": noise_ceiling_up
+    })
+    print(f"Saved noise ceiling bounds to {nc_cache_path}")
 
 
 # =============================================================================

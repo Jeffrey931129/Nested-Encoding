@@ -7,6 +7,9 @@ from matplotlib import pyplot as plt
 from collections import defaultdict
 import time
 import subprocess
+import re
+import ast
+import pandas as pd
 
 # =============================================================================
 # Input arguments
@@ -14,7 +17,7 @@ import subprocess
 parser = argparse.ArgumentParser(description="Recursive plotting script - Compare DNNs")
 parser.add_argument(
     "--project_dir",
-    default="project_directory",
+    default=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     type=str,
     help="Root directory containing DNN subfolders",
 )
@@ -34,14 +37,14 @@ args = parser.parse_args()
 
 def find_files_recursive(current_dir):
     """
-    使用 os.listdir 手動遞迴搜索資料夾
+    Manually search directories recursively using os.listdir
     """
     found_files = []
 
     try:
         entries = os.listdir(current_dir)
     except OSError as e:
-        print(f"警告: 無法讀取目錄 {current_dir} ({e})，跳過。")
+        print(f"Warning: Cannot read directory {current_dir} ({e}), skipping.")
         return []
 
     entries.sort()
@@ -53,7 +56,10 @@ def find_files_recursive(current_dir):
             found_files.extend(find_files_recursive(full_path))
 
         elif os.path.isfile(full_path) and entry.endswith(".npy"):
-            filename_label = os.path.splitext(entry)[0]
+            if entry == ".npy":
+                filename_label = os.path.basename(current_dir)
+            else:
+                filename_label = os.path.splitext(entry)[0]
             parent_folder = os.path.basename(current_dir)
 
             found_files.append(
@@ -65,7 +71,7 @@ def find_files_recursive(current_dir):
 
 def resolve_labels(file_list):
     """
-    處理單一 DNN 內的檔名衝突
+    Handle filename conflicts within a single DNN
     """
     label_counts = defaultdict(int)
     for item in file_list:
@@ -106,18 +112,18 @@ cmap = matplotlib.cm.get_cmap("tab20")
 # =============================================================================
 
 if not os.path.exists(args.project_dir):
-    print(f"錯誤：找不到專案目錄 {args.project_dir}")
+    print(f"Error: Project directory {args.project_dir} not found.")
     exit()
 
-print(f"正在掃描專案目錄: {args.project_dir}...")
+print(f"Scanning project directory: {args.project_dir}...")
 try:
     dir = os.path.join(
-        args.project_dir, "results", "sub-" + format(args.sub, "02"), "stats"
+        args.project_dir, "experiment"
     )
     subdirs = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
     subdirs.sort()
 except OSError as e:
-    print(f"錯誤：無法讀取專案目錄 ({e})")
+    print(f"Error: Cannot read project directory ({e})")
     exit()
 
 if args.target_dnns:
@@ -126,16 +132,16 @@ else:
     dnn_groups = subdirs
 
 if not dnn_groups:
-    print("未找到任何 DNN 資料夾。")
+    print("No DNN folders found.")
     exit()
 
-print(f"即將處理以下 DNN 模型: {dnn_groups}")
+print(f"Preparing to process the following DNN models: {dnn_groups}")
 
-# --- Step 1: 收集所有數據 ---
+# --- Step 1: Collect all data ---
 all_plottable_data = []
 
 for dnn_name in dnn_groups:
-    print(f"正在讀取 DNN: {dnn_name}")
+    print(f"Reading DNN: {dnn_name}")
     dnn_path = os.path.join(dir, dnn_name)
 
     raw_files = find_files_recursive(dnn_path)
@@ -167,13 +173,13 @@ for dnn_name in dnn_groups:
             )
 
         except Exception as e:
-            print(f"  無法讀取 {os.path.basename(fpath)}: {e}")
+            print(f"  Cannot read {os.path.basename(fpath)}: {e}")
 
 if not all_plottable_data:
-    print("錯誤：沒有讀取到任何有效數據。")
+    print("Error: No valid data was read.")
     exit()
 
-print(f"總共收集到 {len(all_plottable_data)} 條數據，開始繪圖...")
+print(f"Collected a total of {len(all_plottable_data)} data entries, starting to plot...")
 
 times = all_plottable_data[0]["data"]["times"]
 num_total = len(all_plottable_data)
@@ -196,7 +202,7 @@ for i, item in enumerate(all_plottable_data):
 # =============================================================================
 # Plot 1: Comparison Line Plot (All in One)
 # =============================================================================
-# figize 設定為 32x20，稍後我們以 DPI 80 輸出，即 32*80 = 2560 像素 (2K 寬度)
+# Set figsize to 32x20 for 2K width resolution (2560 pixels)
 fig1 = plt.figure(figsize=(32, 20))
 plt.title(f"Model Comparison ({len(dnn_groups)} DNNs)", fontsize=30, pad=20)
 
@@ -229,36 +235,31 @@ for i, item in enumerate(all_plottable_data):
 
     plt.plot(times[:p_len], mean_corr[:p_len], color=color, linewidth=3, label=label)
 
-    if "ci_lower" in data_dict:
-        plt.fill_between(
-            times[:p_len], ci_up[:p_len], ci_lo[:p_len], color=color, alpha=0.1
-        )
+nc_cache_dir = os.path.join(args.project_dir, "project_directory", "results", f"sub-{args.sub:02d}", "correlation_bound")
+nc_files = [f for f in os.listdir(nc_cache_dir) if f.endswith(".npy")] if os.path.exists(nc_cache_dir) else []
 
-    sig_y = sig_matrix[i]
-    if len(sig_y) > 0:
-        valid_idx = sig_y > -10
-        plt.plot(
-            times[: len(sig_y)][valid_idx],
-            sig_y[valid_idx],
-            "o",
-            color=color,
-            markersize=3,
-        )
-
-first_data = all_plottable_data[0]["data"]
-if "noise_ceiling_low" in first_data:
-    nc_low = first_data["noise_ceiling_low"]
-    nc_up = first_data["noise_ceiling_up"]
+if nc_files:
+    # Prioritize selecting the cache file with the highest number of iterations (largest filename number)
+    nc_files.sort(key=lambda x: int(os.path.splitext(x)[0]) if os.path.splitext(x)[0].isdigit() else 0, reverse=True)
+    nc_cache_path = os.path.join(nc_cache_dir, nc_files[0])
+    nc_cache_data = np.load(nc_cache_path, allow_pickle=True).item()
+    nc_low = nc_cache_data["noise_ceiling_low"]
+    nc_up = nc_cache_data["noise_ceiling_up"]
+    
     if nc_low.ndim == 3:
         nc_low = np.mean(np.mean(nc_low, 0), 0)
         nc_up = np.mean(np.mean(nc_up, 0), 0)
+    elif nc_low.ndim == 2:
+        nc_low = np.mean(nc_low, 0)
+        nc_up = np.mean(nc_up, 0)
+        
     plt.fill_between(
         times[: len(nc_low)],
         nc_low,
         nc_up,
         color=color_noise_ceiling,
         alpha=0.3,
-        label="Noise Ceiling",
+        label=f"Noise Ceiling (iters: {os.path.splitext(nc_files[0])[0]})",
     )
 
 plt.xlabel("Time (s)", fontsize=24)
@@ -273,14 +274,14 @@ plt.ylim(bottom=-0.1, top=1)
 plt.legend(fontsize=12, loc="upper left", bbox_to_anchor=(1, 1), frameon=False)
 plt.tight_layout()
 
-# 將 Plot 1 存為 JPG，設定 DPI=80 (32英吋 * 80 DPI = 2560 像素，達到 2K 寬度)
+# Save Plot 1 as JPG, setting DPI=300 for high resolution
 plot1_filename = "model_comparison_2K.jpg"
 plt.savefig(plot1_filename, format="jpg", dpi=300)
-print(f"已儲存 Plot 1: {plot1_filename} (解析度 2560x1600)")
-plt.close(fig1)  # 釋放記憶體
+print(f"Saved Plot 1: {plot1_filename} (Resolution 2560x1600)")
+plt.close(fig1)  # Free memory
 
 # =============================================================================
-# Plot 2: Per-Channel Temporal Dynamics (使用 plt.figure 重構)
+# Plot 2: Per-Channel Temporal Dynamics (Refactored using plt.figure)
 # =============================================================================
 first_data_corr = all_plottable_data[0]["data"]["correlation"][
     all_plottable_data[0]["key"]
@@ -293,14 +294,14 @@ else:
     num_channels = 0
 
 if num_channels == 0:
-    print("無法判定通道數量或張量維度錯誤。")
+    print("Cannot determine the number of channels or incorrect tensor dimension.")
 else:
-    # --- 【關鍵保護機制】防止子圖密度過高導致渲染崩潰 ---
-    # 2K 解析度 (2560x1600) 的畫布，若超過 64 個子圖 (16列x4欄)，視覺上會完全糊成一團甚至報錯
+    # --- [Critical Protection Mechanism] Prevent rendering crash due to high subplot density ---
+    # On a 2K resolution (2560x1600) canvas, exceeding 64 subplots (16 rows x 4 columns) causes visual clutter or errors
     MAX_CHANNELS = 64
     if num_channels > MAX_CHANNELS:
         print(
-            f"警告：通道數 ({num_channels}) 過大。為保證 2K 圖片成功渲染，僅繪製前 {MAX_CHANNELS} 個通道。"
+            f"Warning: Number of channels ({num_channels}) is too large. To ensure successful 2K image rendering, only the first {MAX_CHANNELS} channels will be plotted."
         )
         plot_channels = MAX_CHANNELS
     else:
@@ -309,14 +310,14 @@ else:
     cols = 4
     rows = int(math.ceil(plot_channels / cols))
 
-    # 依照要求，重新呼叫 plt.figure 並強制寫死 32x20
+    # Re-call plt.figure and force figsize to 32x20 as requested
     fig2 = plt.figure(figsize=(32, 20))
     fig2.suptitle(
         f"Time-Resolved Encoding Performance per Channel", fontsize=20, y=1.05
     )
 
     for c in range(plot_channels):
-        # 手動逐一建立子圖，代替原本的 plt.subplots
+        # Manually create subplots one by one to replace the original plt.subplots
         ax = fig2.add_subplot(rows, cols, c + 1)
 
         ax.set_title(f"Channel {c}", fontsize=12)
@@ -347,19 +348,19 @@ else:
                 label=label if c == 0 else "",
             )
 
-        # 設定 Y 軸標籤 (僅限最左側欄)
+        # Set Y-axis label (only for the leftmost column)
         if c % cols == 0:
             ax.set_ylabel("Pearson's $r$", fontsize=10)
             ax.tick_params(axis="y", labelsize=10)
 
-        # 設定 X 軸標籤 (僅限最底部列)
+        # Set X-axis label (only for the bottommost row)
         if c >= (rows - 1) * cols or (c + cols) >= plot_channels:
             ax.set_xlabel("Time (s)", fontsize=10)
             ax.set_xticks([-0.2, 0, 0.2, 0.4, 0.6, max(times)])
             ax.set_xticklabels([-0.2, 0, 0.2, 0.4, 0.6, round(max(times), 1)])
             ax.tick_params(axis="x", labelsize=10)
 
-    # 擷取圖例
+    # Extract legend
     handles, labels = fig2.axes[0].get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     if "" in by_label:
@@ -375,22 +376,142 @@ else:
         frameon=False,
     )
 
-    # 處理邊界，並加入例外捕捉以防萬一
+    # Adjust layout and include exception handling as a precaution
     try:
         plt.tight_layout(rect=[0, 0, 1, 0.96])
     except Exception as e:
-        print(f"版面佈局調整警告: {e} (已略過以確保圖片輸出)")
+        print(f"Layout adjustment warning: {e} (Ignored to ensure image output)")
 
     plot2_filename = "channel_dynamics_2K.jpg"
     plt.savefig(plot2_filename, format="jpg", dpi=300)
-    print(f"已儲存 Plot 2: {plot2_filename} (解析度 2560x1600)")
-    plt.close(fig2)  # 釋放記憶體
+    print(f"Saved Plot 2: {plot2_filename} (Resolution 2560x1600)")
+    plt.close(fig2)  # Free memory
+
+# =============================================================================
+# Plot 3 & 4: Hyperparameter Configuration Mean and Variance
+# =============================================================================
+print("Start parsing hyperparameter logs in the experiment folder...")
+script_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(script_dir)
+exp_dir = os.path.join(root_dir, "experiment")
+
+config_pattern = re.compile(r"\[\d+/\d+\] Config:\s*(\{.*\})")
+loss_pattern = re.compile(r"-> Best Val Loss:\s*([0-9.]+)")
+
+all_results = []
+if os.path.exists(exp_dir):
+    for root_path, dirs, files in os.walk(exp_dir):
+        rel_path = os.path.relpath(root_path, exp_dir)
+        if rel_path == '.':
+            continue
+        else:
+            parts = rel_path.split(os.sep)
+            if len(parts) >= 2:
+                folder_name = f"{parts[0]} | {parts[1]}"
+            else:
+                folder_name = parts[0]
+            
+        for file in files:
+            if file.endswith(".log") and not file.endswith("detail.log"):
+                log_path = os.path.join(root_path, file)
+                current_config = None
+                with open(log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        config_match = config_pattern.search(line)
+                        if config_match:
+                            try:
+                                current_config = ast.literal_eval(config_match.group(1))
+                            except:
+                                current_config = None
+                            continue
+                        
+                        loss_match = loss_pattern.search(line)
+                        if loss_match and current_config is not None:
+                            val_loss = float(loss_match.group(1))
+                            
+                            # Create a stable string representation for the config
+                            sorted_items = sorted(current_config.items(), key=lambda x: x[0])
+                            config_str = str(sorted_items)
+                            
+                            all_results.append({
+                                "folder_name": folder_name,
+                                "config_str": config_str,
+                                "best_val_loss": val_loss
+                            })
+                            current_config = None
+
+plot3_filename = "hyperparam_analyze_2K.jpg"
+
+if all_results:
+    df = pd.DataFrame(all_results)
+    
+    # Compute mean and std for EACH subfolder
+    folder_stats = df.groupby('folder_name')['best_val_loss'].agg(['mean', 'std']).reset_index()
+    
+    folder_names = sorted(folder_stats['folder_name'].unique())
+    num_folders = len(folder_names)
+    cmap_hp = plt.get_cmap("tab20")
+    
+    # --- Plot 3: Mean and Std as points on two vertical lines ---
+    fig3, ax1 = plt.subplots(figsize=(32, 20))
+    plt.title(r"Validation Loss Performance per Subfolder", fontsize=30, pad=20)
+    
+    ax1.set_xlim(-0.5, 1.5)
+    ax1.set_xticks([0, 1])
+    ax1.set_xticklabels(["Mean", "Standard Deviation"], fontsize=24)
+    
+    # Draw two vertical lines
+    ax1.axvline(x=0, color='gray', linestyle='--', linewidth=2, alpha=0.5)
+    ax1.axvline(x=1, color='gray', linestyle='--', linewidth=2, alpha=0.5)
+    
+    ax2 = ax1.twinx()
+    
+    for i, fname in enumerate(folder_names):
+        color = cmap_hp(i / num_folders) if num_folders > 1 else cmap_hp(0)
+        
+        row = folder_stats[folder_stats['folder_name'] == fname].iloc[0]
+        f_mean = row['mean']
+        f_std = row['std'] if not pd.isna(row['std']) else 0.0
+        
+        # Plot an invisible line to create a line in the legend
+        ax1.plot([], [], color=color, linewidth=3, label=fname)
+        
+        # Plot Mean on ax1 (x=0) without a label so the dot doesn't show in the legend
+        ax1.plot([0], [f_mean], marker='o', markersize=30, color=color, linestyle='None')
+        # Plot Std on ax2 (x=1)
+        ax2.plot([1], [f_std], marker='o', markersize=30, color=color, linestyle='None')
+    
+    ax1.set_ylabel("Mean Validation Loss", fontsize=24)
+    ax2.set_ylabel("Standard Deviation", fontsize=24)
+    ax1.tick_params(axis='y', labelsize=20)
+    ax2.tick_params(axis='y', labelsize=20)
+    
+    ax1.legend(fontsize=20, loc="upper left", bbox_to_anchor=(1.05, 1), frameon=False)
+    
+    plt.tight_layout()
+    plt.savefig(plot3_filename, format="jpg", dpi=300)
+    print(f"Saved Plot 3: {plot3_filename} (Resolution 2560x1600)")
+    plt.close(fig3)
+else:
+    print("No valid log data found in the experiment folder.")
 
 try:
-    subprocess.Popen(["explorer", os.path.abspath(plot1_filename)])
-    time.sleep(1)
-    subprocess.Popen(["explorer", os.path.abspath(plot2_filename)])
+    if os.name == 'nt':
+        subprocess.Popen(["explorer", os.path.abspath(plot1_filename)])
+        time.sleep(1)
+        subprocess.Popen(["explorer", os.path.abspath(plot2_filename)])
+        time.sleep(1)
+        if os.path.exists(plot3_filename):
+            subprocess.Popen(["explorer", os.path.abspath(plot3_filename)])
+    else:
+        import platform
+        opener = "open" if platform.system() == "Darwin" else "xdg-open"
+        subprocess.Popen([opener, os.path.abspath(plot1_filename)])
+        subprocess.Popen([opener, os.path.abspath(plot2_filename)])
+        if os.path.exists(plot3_filename):
+            subprocess.Popen([opener, os.path.abspath(plot3_filename)])
 except Exception as e:
-    print(f"{e}")
+    print(f"Warning: Could not open images automatically ({e})")
 
-print("所有繪圖任務完成並已存成 2K JPG 檔案。")
+print("All plotting tasks completed and saved as 2K JPG files.")

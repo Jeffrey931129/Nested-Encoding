@@ -92,9 +92,6 @@ class NestedAdam(torch.optim.Optimizer):
                     state["m_buffer"] = torch.zeros_like(
                         p, memory_format=torch.preserve_format
                     )
-                    state["v_buffer"] = torch.zeros_like(
-                        p, memory_format=torch.preserve_format
-                    )
 
                 state["step"] += 1
                 state["inner_step"] += 1
@@ -102,11 +99,14 @@ class NestedAdam(torch.optim.Optimizer):
                 m = state["m"]
                 v = state["v"]
                 m_buffer = state["m_buffer"]
-                v_buffer = state["v_buffer"]
 
-                # 1. Accumulate raw gradients and squared gradients into buffers
-                m_buffer.mul_(alpha).add_(grad, alpha=(1.0 - alpha))
-                v_buffer.addcmul_(grad, grad)
+                # 1. Accumulate raw gradients into m_buffer, and update v like standard Adam
+                if state["inner_step"] == 1:
+                    m_buffer.copy_(grad)
+                else:
+                    m_buffer.mul_(alpha).add_(grad, alpha=(1.0 - alpha))
+                
+                v.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
 
                 # 2. Update macroscopic moments strictly at chunk boundaries
                 # Note: We also trigger an update on step 1 to prevent division by zero (v=0)
@@ -116,21 +116,15 @@ class NestedAdam(torch.optim.Optimizer):
                     # Update Rule: m = beta1 * m + (1 - beta1) * (m_buffer * scale)
                     m.mul_(beta1).add_(m_buffer, alpha=(1.0 - beta1))
 
-                    # Update Rule: v = beta2 * v + (1 - beta2) * (v_buffer * scale)
-                    # v.mul_(beta2).add_(v_buffer, alpha=(1.0 - beta2) * scale)
-
-                    # Reset buffers for the next chunk interval
+                    # Reset buffer for the next chunk interval
                     m_buffer.zero_()
-                    # v_buffer.zero_()
                     state["inner_step"] = 0
 
-                v.mul_(beta2).add_(v_buffer, alpha=(1.0 - beta2))
-                v_buffer.zero_()
-
-                # 3. Bias Correction based on the number of macroscopic updates (chunk_step)
-                T = state["chunk_step"]
-                bias_correction1 = 1.0 - beta1**T
-                bias_correction2 = 1.0 - beta2**T
+                # 3. Bias Correction 
+                T_m = state["chunk_step"]
+                T_v = state["step"]
+                bias_correction1 = 1.0 - beta1**T_m
+                bias_correction2 = 1.0 - beta2**T_v
 
                 m_hat = m / bias_correction1
                 v_hat = v / bias_correction2

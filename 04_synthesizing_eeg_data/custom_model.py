@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class CustomModel(nn.Module):
-    def __init__(self, num_channels, time_points, hidden_dim=512, num_layers=3):
+    def __init__(self, num_channels=17, time_points=100, hidden_dim=512, num_layers=3):
         super(CustomModel, self).__init__()
         self.num_channels = num_channels
         self.time_points = time_points

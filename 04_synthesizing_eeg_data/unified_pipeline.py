@@ -35,21 +35,22 @@ class Args:
         self.dnn = "adam"
         self.pretrained = True
         self.epochs = 200
-        self.lr = 0.0001
+        self.patience = 30
+        self.lr = 0.00001
         self.weight_decay = 0.0
         self.momentum = 0.9
         
         # Nested optimizer specific arguments
-        self.alpha = 0.9
+        self.alpha = 0.1
         self.beta = (0.9, 0.999)  # Natively defined as a tuple
-        self.chunk_size = 10
+        self.chunk_size = 4
         self.batch_size = 32
         
         # I/O arguments
         self.project_dir = "project_directory"
         
         # Combined analysis arguments
-        self.corr_n_iter = 100
+        self.corr_n_iter = 1000
         self.stats_n_iter = 10000
 
 def main():
@@ -109,17 +110,23 @@ def main():
     model.to(device)
 
     f_fast = 1
-    f_mid = 4
-    f_slow = 8
+    f_mid = 2
+    f_slow = 4
 
     param_fast = [
         {"params": model.features[0:4].parameters(), "lr": args.lr * 0.1},
         {"params": model.feature_projection.parameters(), "lr": args.lr},
-        {"params": model.lstm_layers.parameters(), "lr": args.lr},
+        {"params": model.lstm_layers[2].parameters(), "lr": args.lr},
         {"params": model.channel_decoder.parameters(), "lr": args.lr},
     ]
-    param_mid = None
-    param_slow = None
+    param_mid = [
+        {"params": model.features[4:9].parameters(), "lr": args.lr * 0.1},
+        {"params": model.lstm_layers[1].parameters(), "lr": args.lr},
+    ]
+    param_slow = [
+        {"params": model.features[9:13].parameters(), "lr": args.lr * 0.1},
+        {"params": model.lstm_layers[0].parameters(), "lr": args.lr},
+    ]
 
     if args.dnn == "gradient":
         opt_fast = torch.optim.SGD(param_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)
@@ -145,6 +152,7 @@ def main():
     # =============================================================================
     print("\n", "=" * 10, "Training Model", "=" * 10)
     best_val_loss = float("inf")
+    epochs_no_improve = 0
     best_model = None
 
     # Progress bar for Epochs within this specific combination
@@ -209,10 +217,18 @@ def main():
             {"Val_Loss": f"{val_loss:.4f}", "Best": f"{best_val_loss:.4f}"}
         )
         
+        # Early Stopping Logic
         if val_loss < best_val_loss:
             best_model = deepcopy(model)
             best_epochs[0] = epoch + 1
             best_val_loss = val_loss
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+
+        if epochs_no_improve >= args.patience:
+            print(f"\nEarly stopping at epoch {epoch + 1}")
+            break
             
     print(f"Best Epochs: {best_epochs[0]}, Best Loss: {best_val_loss:.4f}")
     del model
@@ -254,49 +270,75 @@ def main():
     bio_test = bio_data["preprocessed_eeg_data"]
     del bio_data
 
-    correlation = {layer: np.zeros((args.corr_n_iter, bio_test.shape[2], bio_test.shape[3])) for layer in synthetic_data_dict.keys()}
-    noise_ceiling_low = np.zeros((args.corr_n_iter, bio_test.shape[2], bio_test.shape[3]))
-    noise_ceiling_up = np.zeros((args.corr_n_iter, bio_test.shape[2], bio_test.shape[3]))
-
+    # We evaluate model against the FULL average data to avoid data leakage
     bio_data_avg_all = np.mean(bio_test, 1)
 
-    for i in tqdm(range(args.corr_n_iter)):
-        shuffle_idx = resample(np.arange(0, bio_test.shape[1]), replace=False, n_samples=int(bio_test.shape[1] / 2))
-        bio_data_avg_half_1 = np.mean(np.delete(bio_test, shuffle_idx, 1), 1)
-        bio_data_avg_half_2 = np.mean(bio_test[:, shuffle_idx, :, :], 1)
+    correlation = {layer: np.zeros((bio_test.shape[2], bio_test.shape[3])) for layer in synthetic_data_dict.keys()}
 
-        for t in range(bio_test.shape[3]):
-            for c in range(bio_test.shape[2]):
-                for layer in synthetic_data_dict.keys():
-                    correlation[layer][i, c, t] = corr(synthetic_data_dict[layer][:, c, t], bio_data_avg_half_1[:, c, t])[0]
-                noise_ceiling_low[i, c, t] = corr(bio_data_avg_half_2[:, c, t], bio_data_avg_half_1[:, c, t])[0]
-                noise_ceiling_up[i, c, t] = corr(bio_data_avg_all[:, c, t], bio_data_avg_half_1[:, c, t])[0]
+    # 5.1 Model vs Full Data Correlation
+    print("Computing model correlations against full average data...")
+    for t in tqdm(range(bio_test.shape[3])):
+        for c in range(bio_test.shape[2]):
+            for layer in synthetic_data_dict.keys():
+                correlation[layer][c, t] = corr(synthetic_data_dict[layer][:, c, t], bio_data_avg_all[:, c, t])[0]
 
-    # Average results across iterations
-    for layer in synthetic_data_dict.keys():
-        correlation[layer] = np.mean(correlation[layer], 0)
-    noise_ceiling_low = np.mean(noise_ceiling_low, 0)
-    noise_ceiling_up = np.mean(noise_ceiling_up, 0)
+    # 5.2 Split-Half Reliability for Noise Ceiling
+    nc_cache_dir = os.path.join(args.project_dir, "results", f"sub-{args.sub:02d}", "correlation_bound")
+    nc_cache_path = os.path.join(nc_cache_dir, f"{args.corr_n_iter}.npy")
+
+    if os.path.exists(nc_cache_path):
+        print(f"Loading cached noise ceiling bounds from {nc_cache_path}...")
+        nc_cache_data = np.load(nc_cache_path, allow_pickle=True).item()
+        noise_ceiling_low = nc_cache_data["noise_ceiling_low"]
+        noise_ceiling_up = nc_cache_data["noise_ceiling_up"]
+    else:
+        print("Estimating split-half reliability for noise ceiling...")
+        noise_ceiling_low_splits = np.zeros((args.corr_n_iter, bio_test.shape[2], bio_test.shape[3]))
+        for i in tqdm(range(args.corr_n_iter)):
+            shuffle_idx = resample(np.arange(0, bio_test.shape[1]), replace=False, n_samples=int(bio_test.shape[1] / 2))
+            bio_data_avg_half_1 = np.mean(np.delete(bio_test, shuffle_idx, 1), 1)
+            bio_data_avg_half_2 = np.mean(bio_test[:, shuffle_idx, :, :], 1)
+    
+            for t in range(bio_test.shape[3]):
+                for c in range(bio_test.shape[2]):
+                    noise_ceiling_low_splits[i, c, t] = corr(bio_data_avg_half_2[:, c, t], bio_data_avg_half_1[:, c, t])[0]
+    
+        # Helper function for Fisher Z-transform averaging
+        def fisher_z_mean(corrs):
+            corrs = np.clip(corrs, -1 + 1e-7, 1 - 1e-7)
+            return np.tanh(np.mean(np.arctanh(corrs), axis=0))
+    
+        # Average split-half reliability across iterations using Fisher Z
+        noise_ceiling_low = fisher_z_mean(noise_ceiling_low_splits)
+    
+        # Apply Spearman-Brown formula to estimate full data reliability
+        noise_ceiling_low = 2 * noise_ceiling_low / (1 + noise_ceiling_low)
+    
+        # Theoretical upper bound for full data is the square root of its reliability
+        noise_ceiling_up = np.sqrt(np.clip(noise_ceiling_low, 0, None))
+        
+        os.makedirs(nc_cache_dir, exist_ok=True)
+        np.save(nc_cache_path, {
+            "noise_ceiling_low": noise_ceiling_low,
+            "noise_ceiling_up": noise_ceiling_up
+        })
+        print(f"Saved noise ceiling bounds to {nc_cache_path}")
 
     # =============================================================================
     # 6. Statistical Significance & Bootstrapping (In-Memory Processing)
     # =============================================================================
     print("\n", "=" * 10, "Statistical Analysis", "=" * 10)
-    # Expand dimensions to simulate multiple subjects array shape (1, channels, times)
-    correlation_stat = {}
+    # Compute differences (shape: channels, times)
     diff_noise_ceiling = {}
-    nc_low_stat = np.expand_dims(noise_ceiling_low, 0)
-    nc_up_stat = np.expand_dims(noise_ceiling_up, 0)
-    
     for layer in correlation.keys():
-        correlation_stat[layer] = np.expand_dims(correlation[layer], 0)
-        diff_noise_ceiling[layer] = nc_low_stat - correlation_stat[layer]
+        diff_noise_ceiling[layer] = noise_ceiling_low - correlation[layer]
 
     ci_lower, ci_upper = {}, {}
     ci_lower_diff, ci_upper_diff = {}, {}
 
-    for layer in correlation_stat.keys():
-        time_points = correlation_stat[layer].shape[2]
+    # Option 1: Across-channel within-subject statistics
+    for layer in correlation.keys():
+        time_points = correlation[layer].shape[1]
         ci_lower[layer], ci_upper[layer] = np.zeros(time_points), np.zeros(time_points)
         ci_lower_diff[layer], ci_upper_diff[layer] = np.zeros(time_points), np.zeros(time_points)
         
@@ -304,9 +346,9 @@ def main():
             sample_dist = np.zeros(args.stats_n_iter)
             sample_dist_diff = np.zeros(args.stats_n_iter)
             for i in range(args.stats_n_iter):
-                # Resampling across the subject dimension (which is index 0)
-                sample_dist[i] = np.mean(resample(np.mean(correlation_stat[layer][:, :, t], 1)))
-                sample_dist_diff[i] = np.mean(resample(np.mean(diff_noise_ceiling[layer][:, :, t], 1)))
+                # Resampling across the channel dimension
+                sample_dist[i] = np.mean(resample(correlation[layer][:, t]))
+                sample_dist_diff[i] = np.mean(resample(diff_noise_ceiling[layer][:, t]))
             
             ci_lower[layer][t] = np.percentile(sample_dist, 2.5)
             ci_upper[layer][t] = np.percentile(sample_dist, 97.5)
@@ -316,24 +358,31 @@ def main():
     p_values, p_values_diff = {}, {}
     significance, significance_diff = {}, {}
 
-    for layer in correlation_stat.keys():
-        time_points = correlation_stat[layer].shape[2]
+    for layer in correlation.keys():
+        time_points = correlation[layer].shape[1]
         p_values[layer] = np.ones(time_points)
         p_values_diff[layer] = np.ones(time_points)
         
         for t in range(time_points):
-            fisher_values = np.arctanh(np.mean(correlation_stat[layer][:, :, t], 1))
-            fisher_values_diff = np.arctanh(np.mean(diff_noise_ceiling[layer][:, :, t], 1))
+            # Fisher Z transform across channels before t-test
+            # Clip correlation to prevent inf
+            corr_clipped = np.clip(correlation[layer][:, t], -1 + 1e-7, 1 - 1e-7)
+            diff_clipped = np.clip(diff_noise_ceiling[layer][:, t], -1 + 1e-7, 1 - 1e-7)
             
-            if len(fisher_values) < 2:
-                p_values[layer][t] = 1.0
-                p_values_diff[layer][t] = 1.0
-            else:
-                p_values[layer][t] = ttest_1samp(fisher_values, 0, alternative="greater")[1]
-                p_values_diff[layer][t] = ttest_1samp(fisher_values_diff, 0, alternative="greater")[1]
+            fisher_values = np.arctanh(corr_clipped)
+            fisher_values_diff = np.arctanh(diff_clipped)
+            
+            p_values[layer][t] = ttest_1samp(fisher_values, 0, alternative="greater")[1]
+            p_values_diff[layer][t] = ttest_1samp(fisher_values_diff, 0, alternative="greater")[1]
 
         significance[layer] = multipletests(p_values[layer], 0.05, "bonferroni")[0]
         significance_diff[layer] = multipletests(p_values_diff[layer], 0.05, "bonferroni")[0]
+
+    # For export backwards compatibility, we expand dims to simulate a (1, channels, times) subject array
+    correlation_stat = {layer: np.expand_dims(correlation[layer], 0) for layer in correlation.keys()}
+    diff_noise_ceiling_stat = {layer: np.expand_dims(diff_noise_ceiling[layer], 0) for layer in diff_noise_ceiling.keys()}
+    nc_low_stat = np.expand_dims(noise_ceiling_low, 0)
+    nc_up_stat = np.expand_dims(noise_ceiling_up, 0)
 
     # =============================================================================
     # 7. Final Output Export
@@ -342,16 +391,17 @@ def main():
         "correlation": correlation_stat,
         "ci_lower": ci_lower, "ci_upper": ci_upper, "significance": significance,
         "noise_ceiling_low": nc_low_stat, "noise_ceiling_up": nc_up_stat,
-        "diff_noise_ceiling": diff_noise_ceiling,
+        "diff_noise_ceiling": diff_noise_ceiling_stat,
         "ci_lower_diff_noise_ceiling": ci_lower_diff, "ci_upper_diff_noise_ceiling": ci_upper_diff,
         "significance_diff_noise_ceiling": significance_diff,
         "times": times, "ch_names": ch_names,
     }
 
-    stats_save_dir = os.path.join(args.project_dir, "results", f"sub-{args.sub:02d}", "stats", f"dnn-{args.dnn}")
+    stats_save_dir = os.path.join("experiment", "tmp")
     os.makedirs(stats_save_dir, exist_ok=True)
-    np.save(os.path.join(stats_save_dir, "correlation_stats.npy"), stats_dict)
-    print(f"\nPipeline Complete! Final stats saved to {os.path.join(stats_save_dir, 'correlation_stats.npy')}")
+    save_path = os.path.join(stats_save_dir, ".npy")
+    np.save(save_path, stats_dict)
+    print(f"\nPipeline Complete! Final stats saved to {save_path}")
 
 if __name__ == "__main__":
     main()

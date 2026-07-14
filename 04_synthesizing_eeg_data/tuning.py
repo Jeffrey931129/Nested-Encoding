@@ -238,8 +238,12 @@ if __name__ == "__main__":
     # 1. Initialize Log File with Timestamp
     current_time = datetime.now()
     formatted_time = current_time.strftime("%Y_%m_%d_%H_%M_%S")
-    log_file = f"{formatted_time}.log"
-    detail_log_file = f"{formatted_time}_detail.log"
+    
+    log_dir = os.path.join("experiment", "tmp")
+    os.makedirs(log_dir, exist_ok=True)
+    
+    log_file = os.path.join(log_dir, f"{formatted_time}.log")
+    detail_log_file = os.path.join(log_dir, f"{formatted_time}_detail.log")
     print(f"Tuning started. Results will be saved to: {log_file} and {detail_log_file}")
 
     # 2. Setup Data (Reusing your logic)
