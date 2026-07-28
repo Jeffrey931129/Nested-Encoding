@@ -97,5 +97,5 @@ def analyze_hyperparam_log(log_path: str):
 # Assuming your log file is named 'hparam_search.log'
 if __name__ == "__main__":
     # Uncomment the line below to run with your specific log file path
-    df_results = analyze_hyperparam_log("2026_05_31_15_40_27.log")
+    df_results = analyze_hyperparam_log(r"experiment\nested_adam + nested_model\5conv2d + 3LSTM (10M)\.log")
     pass

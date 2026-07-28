@@ -129,5 +129,6 @@ dmypy.json
 .pyre/
 
 experiment
+experiment_tmp
 project_directory
 *.jpg

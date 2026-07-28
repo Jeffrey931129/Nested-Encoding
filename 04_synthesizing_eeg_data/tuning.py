@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from datetime import datetime
 from tqdm import tqdm
-from sklearn.model_selection import ParameterGrid
+from sklearn.model_selection import ParameterGrid, KFold
 from sklearn.utils import resample
 from nested_sgd import NestedSGD
 from nested_adam import NestedAdam
@@ -67,6 +67,9 @@ def train_and_evaluate(
     ]
 
     # Select optimizer based on model_type
+    f_fast, f_mid, f_slow = config.get("freq", (1, 1, 1))
+    c_fast, c_mid, c_slow = config.get("chunk_size", (1, 1, 1))
+
     if model_type == "gradient":
         opt_fast = torch.optim.SGD(
             param_fast + param_mid + param_slow,
@@ -82,7 +85,7 @@ def train_and_evaluate(
             lr=config["lr"],
             momentum=config["momentum"],
             alpha=config["alpha"],
-            chunk_size=config["chunk_size"],
+            chunk_size=c_fast,
             weight_decay=config["weight_decay"],
         )
         opt_mid = NestedSGD(
@@ -90,7 +93,7 @@ def train_and_evaluate(
             lr=config["lr"],
             momentum=config["momentum"],
             alpha=config["alpha"],
-            chunk_size=config["chunk_size"],
+            chunk_size=c_mid,
             weight_decay=config["weight_decay"],
         )
         opt_slow = NestedSGD(
@@ -98,7 +101,7 @@ def train_and_evaluate(
             lr=config["lr"],
             momentum=config["momentum"],
             alpha=config["alpha"],
-            chunk_size=config["chunk_size"],
+            chunk_size=c_slow,
             weight_decay=config["weight_decay"],
         )
     elif model_type == "adam":
@@ -116,8 +119,9 @@ def train_and_evaluate(
             beta=config["beta"],
             eps=config["eps"],
             alpha=config["alpha"],
-            chunk_size=config["chunk_size"],
+            chunk_size=c_fast,
             weight_decay=config["weight_decay"],
+            freq=f_fast,
         )
         opt_mid = NestedAdam(
             param_mid,
@@ -125,8 +129,9 @@ def train_and_evaluate(
             beta=config["beta"],
             eps=config["eps"],
             alpha=config["alpha"],
-            chunk_size=config["chunk_size"],
+            chunk_size=c_mid,
             weight_decay=config["weight_decay"],
+            freq=f_mid,
         )
         opt_slow = NestedAdam(
             param_slow,
@@ -134,8 +139,9 @@ def train_and_evaluate(
             beta=config["beta"],
             eps=config["eps"],
             alpha=config["alpha"],
-            chunk_size=config["chunk_size"],
+            chunk_size=c_slow,
             weight_decay=config["weight_decay"],
+            freq=f_slow,
         )
 
     loss_fn = nn.MSELoss().to(device)
@@ -143,8 +149,6 @@ def train_and_evaluate(
 
     best_val_loss = float("inf")
     epochs_no_improve = 0
-
-    f_fast, f_mid, f_slow = config.get("freq", (1, 1, 1))
 
     # Progress bar for Epochs within this specific combination
     pbar = tqdm(range(max_epochs), desc=f"Combo {combo_id}", unit="epoch", leave=False)
@@ -163,13 +167,12 @@ def train_and_evaluate(
                     loss = loss_fn(pred, y)
                 scaler.scale(loss).backward()
 
-                if current_step % f_fast == 0:
-                    scaler.step(opt_fast)
-                    opt_fast.zero_grad()
-                if opt_mid is not None and current_step % f_mid == 0:
+                scaler.step(opt_fast)
+                opt_fast.zero_grad()
+                if opt_mid is not None:
                     scaler.step(opt_mid)
                     opt_mid.zero_grad()
-                if opt_slow is not None and current_step % f_slow == 0:
+                if opt_slow is not None:
                     scaler.step(opt_slow)
                     opt_slow.zero_grad()
 
@@ -179,13 +182,12 @@ def train_and_evaluate(
                 loss = loss_fn(pred, y)
                 loss.backward()
 
-                if current_step % f_fast == 0:
-                    opt_fast.step()
-                    opt_fast.zero_grad()
-                if opt_mid is not None and current_step % f_mid == 0:
+                opt_fast.step()
+                opt_fast.zero_grad()
+                if opt_mid is not None:
                     opt_mid.step()
                     opt_mid.zero_grad()
-                if opt_slow is not None and current_step % f_slow == 0:
+                if opt_slow is not None:
                     opt_slow.step()
                     opt_slow.zero_grad()
 
@@ -258,13 +260,12 @@ if __name__ == "__main__":
     g_cpu.manual_seed(seed)
 
     train_img_concepts = np.arange(1654)
-    val_concepts = np.sort(resample(train_img_concepts, replace=False, n_samples=100))
-    idx_val = np.zeros((16540), dtype=bool)
-    for i in val_concepts:
-        idx_val[i * 10 : i * 10 + 10] = True
-
-    X_train, X_val, X_test = load_images(args, idx_val)
-    y_train, y_val, y_test, _, _ = load_eeg_data(args, idx_val)
+    # Load ALL training data into memory at once to avoid disk I/O per fold
+    idx_val_all_false = np.zeros((16540), dtype=bool)
+    
+    X_all, _, X_test = load_images(args, idx_val_all_false)
+    y_all, _, y_test, _, _ = load_eeg_data(args, idx_val_all_false)
+    
     eeg_channels = y_test.shape[1]
     eeg_time_points = y_test.shape[2]
 
@@ -285,7 +286,7 @@ if __name__ == "__main__":
             "weight_decay": [0],
             "freeze_conv_base": [False],
             "alpha": [0.9],
-            "chunk_size": [10, 25],
+            "chunk_size": [(10, 10, 10), (25, 25, 25)],
             "freq": [(1, 2, 4), (1, 4, 8)],
         }
     elif args.model == "adam":
@@ -296,14 +297,14 @@ if __name__ == "__main__":
         }
     elif args.model == "adam+nested":
         hyperparameter_space = {
-            "lr": [1e-3, 1e-4, 1e-5],
-            "batch_size": [32, 64],
-            "alpha": [0.1, 0.5, 0.9],
+            "lr": [1e-5],
+            "batch_size": [32],
+            "alpha": [0.0, 0.01, 0.1],
             "beta": [(0.9, 0.999)],
             "eps": [1e-8],
-            "chunk_size": [4, 10, 25],
+            "chunk_size": [(1, 1, 1), (1, 2, 4), (1, 4, 8)],
             "freq": [(1, 1, 1), (1, 2, 4), (1, 4, 8)],
-            "weight_decay": [0.0, 1e-4],
+            "weight_decay": [0.0],
         }
     grid = list(ParameterGrid(hyperparameter_space))
 
@@ -326,36 +327,61 @@ if __name__ == "__main__":
             f.flush()
             fd.flush()
 
-            # Create DataLoaders for this batch_size
-            args.batch_size = config["batch_size"]
-            train_dl, val_dl, _ = create_dataloader(
-                args, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
-            )
+            # Set up 5-Fold Cross Validation
+            kf = KFold(n_splits=5, shuffle=True, random_state=seed)
+            fold_val_losses = []
+            
+            for fold_idx, (train_index, val_index) in enumerate(kf.split(train_img_concepts)):
+                print(f"  --- Fold {fold_idx + 1}/5 ---")
+                
+                # Create validation mask for this fold
+                val_mask = np.zeros(16540, dtype=bool)
+                for i in val_index:
+                    val_mask[i * 10 : i * 10 + 10] = True
+                    
+                # Slice the in-memory data
+                X_train_fold = [X_all[i] for i in range(16540) if not val_mask[i]]
+                X_val_fold = [X_all[i] for i in range(16540) if val_mask[i]]
+                y_train_fold = y_all[~val_mask]
+                y_val_fold = y_all[val_mask]
 
-            # Run Training
-            best_val, epochs_run = train_and_evaluate(
-                config,
-                train_dl,
-                val_dl,
-                device,
-                eeg_channels,
-                eeg_time_points,
-                combo_id=idx + 1,
-                model_type=args.model,
-                log_file=fd,
-            )
+                # Create DataLoaders for this batch_size and fold
+                args.batch_size = config["batch_size"]
+                train_dl, val_dl, _ = create_dataloader(
+                    args, 0, g_cpu, X_train_fold, X_val_fold, X_test, y_train_fold, y_val_fold, y_test
+                )
+
+                # Run Training for this fold
+                best_val, epochs_run = train_and_evaluate(
+                    config,
+                    train_dl,
+                    val_dl,
+                    device,
+                    eeg_channels,
+                    eeg_time_points,
+                    combo_id=idx + 1,
+                    model_type=args.model,
+                    log_file=fd,
+                )
+                
+                fold_val_losses.append(best_val)
+                fd.write(f"  Fold {fold_idx + 1} Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
+                print(f"  -> Fold {fold_idx + 1} Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})")
+
+            # Average Validation Loss across 5 folds
+            avg_val_loss = np.mean(fold_val_losses)
 
             # Log results
             f.write(
-                f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n"
+                f"-> Average Val Loss: {avg_val_loss:.4f}\n"
             )
             fd.write(
-                f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n"
+                f"-> Average Val Loss: {avg_val_loss:.4f}\n"
             )
-            print(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})")
+            print(f"-> Average Val Loss: {avg_val_loss:.4f}")
 
-            if best_val < best_overall_loss:
-                best_overall_loss = best_val
+            if avg_val_loss < best_overall_loss:
+                best_overall_loss = avg_val_loss
                 best_overall_config = config  # Save the best configuration
                 f.write(">>> New Best Found! <<<\n")
                 fd.write(">>> New Best Found! <<<\n")

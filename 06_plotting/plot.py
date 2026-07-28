@@ -478,9 +478,9 @@ if all_results:
         ax1.plot([], [], color=color, linewidth=3, label=fname)
         
         # Plot Mean on ax1 (x=0) without a label so the dot doesn't show in the legend
-        ax1.plot([0], [f_mean], marker='o', markersize=30, color=color, linestyle='None')
+        ax1.plot([0], [f_mean], marker='_', markersize=50, markeredgewidth=5, color=color, linestyle='None')
         # Plot Std on ax2 (x=1)
-        ax2.plot([1], [f_std], marker='o', markersize=30, color=color, linestyle='None')
+        ax2.plot([1], [f_std], marker='_', markersize=50, markeredgewidth=5, color=color, linestyle='None')
     
     ax1.set_ylabel("Mean Validation Loss", fontsize=24)
     ax2.set_ylabel("Standard Deviation", fontsize=24)

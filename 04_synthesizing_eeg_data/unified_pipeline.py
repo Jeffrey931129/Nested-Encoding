@@ -32,7 +32,7 @@ class Args:
         # Core modeling arguments
         self.sub = 1
         self.modeled_time_points = "all"
-        self.dnn = "adam"
+        self.dnn = "adam+nested"
         self.pretrained = True
         self.epochs = 200
         self.patience = 30
@@ -43,7 +43,8 @@ class Args:
         # Nested optimizer specific arguments
         self.alpha = 0.1
         self.beta = (0.9, 0.999)  # Natively defined as a tuple
-        self.chunk_size = 4
+        self.freq = (1, 2, 4)
+        self.chunk_size = (1, 2, 4)
         self.batch_size = 32
         
         # I/O arguments
@@ -109,9 +110,8 @@ def main():
     # print(model)
     model.to(device)
 
-    f_fast = 1
-    f_mid = 2
-    f_slow = 4
+    f_fast, f_mid, f_slow = args.freq
+    c_fast, c_mid, c_slow = args.chunk_size
 
     param_fast = [
         {"params": model.features[0:4].parameters(), "lr": args.lr * 0.1},
@@ -132,16 +132,16 @@ def main():
         opt_fast = torch.optim.SGD(param_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)
         opt_mid, opt_slow = None, None
     elif args.dnn == "gradient+nested":
-        opt_fast = NestedSGD(param_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=args.chunk_size)
-        opt_mid = NestedSGD(param_mid, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=args.chunk_size)
-        opt_slow = NestedSGD(param_slow, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=args.chunk_size)
+        opt_fast = NestedSGD(param_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=c_fast)
+        opt_mid = NestedSGD(param_mid, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=c_mid)
+        opt_slow = NestedSGD(param_slow, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=c_slow)
     elif args.dnn == "adam":
         opt_fast = torch.optim.Adam(param_fast, lr=args.lr, weight_decay=args.weight_decay)
         opt_mid, opt_slow = None, None
     elif args.dnn == "adam+nested":
-        opt_fast = NestedAdam(param_fast, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=args.chunk_size)
-        opt_mid = NestedAdam(param_mid, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=args.chunk_size)
-        opt_slow = NestedAdam(param_slow, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=args.chunk_size)
+        opt_fast = NestedAdam(param_fast, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=c_fast, freq=f_fast)
+        opt_mid = NestedAdam(param_mid, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=c_mid, freq=f_mid)
+        opt_slow = NestedAdam(param_slow, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=c_slow, freq=f_slow)
 
     loss_fn = torch.nn.MSELoss().to(device)
     scaler = torch.amp.GradScaler("cuda")
@@ -172,13 +172,12 @@ def main():
                     loss = loss_fn(pred, y)
                 scaler.scale(loss).backward()
 
-                if current_step % f_fast == 0:
-                    scaler.step(opt_fast)
-                    opt_fast.zero_grad()
-                if opt_mid is not None and current_step % f_mid == 0:
+                scaler.step(opt_fast)
+                opt_fast.zero_grad()
+                if opt_mid is not None:
                     scaler.step(opt_mid)
                     opt_mid.zero_grad()
-                if opt_slow is not None and current_step % f_slow == 0:
+                if opt_slow is not None:
                     scaler.step(opt_slow)
                     opt_slow.zero_grad()
 
@@ -188,13 +187,12 @@ def main():
                 loss = loss_fn(pred, y)
                 loss.backward()
 
-                if current_step % f_fast == 0:
-                    opt_fast.step()
-                    opt_fast.zero_grad()
-                if opt_mid is not None and current_step % f_mid == 0:
+                opt_fast.step()
+                opt_fast.zero_grad()
+                if opt_mid is not None:
                     opt_mid.step()
                     opt_mid.zero_grad()
-                if opt_slow is not None and current_step % f_slow == 0:
+                if opt_slow is not None:
                     opt_slow.step()
                     opt_slow.zero_grad()
 

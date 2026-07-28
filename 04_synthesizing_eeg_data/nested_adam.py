@@ -20,17 +20,20 @@ class NestedAdam(torch.optim.Optimizer):
         alpha: float = 1.0,
         beta: Tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
+        freq: int = 1,
         chunk_size: int = 4,
         weight_decay: float = 0.0,
     ) -> None:
         if not 0.0 <= lr:
             raise ValueError(f"Invalid learning rate: {lr}")
-        if not 0.0 <= eps:
-            raise ValueError(f"Invalid epsilon value: {eps}")
         if not 0.0 <= beta[0] < 1.0:
             raise ValueError(f"Invalid beta parameter at index 0: {beta[0]}")
         if not 0.0 <= beta[1] < 1.0:
             raise ValueError(f"Invalid beta parameter at index 1: {beta[1]}")
+        if not 0.0 <= eps:
+            raise ValueError(f"Invalid epsilon value: {eps}")
+        if freq < 1:
+            raise ValueError(f"Invalid freq: {freq}")
         if chunk_size < 1:
             raise ValueError(f"Invalid chunk_size: {chunk_size}")
 
@@ -39,6 +42,7 @@ class NestedAdam(torch.optim.Optimizer):
             alpha=alpha,
             beta=beta,
             eps=eps,
+            freq=freq,
             chunk_size=chunk_size,
             weight_decay=weight_decay,
         )
@@ -59,6 +63,7 @@ class NestedAdam(torch.optim.Optimizer):
             alpha = group["alpha"]
             beta1, beta2 = group["beta"]
             eps = group["eps"]
+            freq = group["freq"]
             chunk_size = group["chunk_size"]
             weight_decay = group["weight_decay"]
 
@@ -77,11 +82,12 @@ class NestedAdam(torch.optim.Optimizer):
                 # State initialization
                 if not state:
                     state["step"] = 0
-                    state["inner_step"] = 0
-                    state["chunk_step"] = 0
 
                     # Macroscopic moments (updated low-frequency)
-                    state["m"] = torch.zeros_like(
+                    state["m_1"] = torch.zeros_like(
+                        p, memory_format=torch.preserve_format
+                    )
+                    state["m_2"] = torch.zeros_like(
                         p, memory_format=torch.preserve_format
                     )
                     state["v"] = torch.zeros_like(
@@ -89,56 +95,53 @@ class NestedAdam(torch.optim.Optimizer):
                     )
 
                     # High-frequency accumulation buffers
-                    state["m_buffer"] = torch.zeros_like(
-                        p, memory_format=torch.preserve_format
-                    )
+                    state["m_buffer"] = [
+                        torch.zeros_like(p, memory_format=torch.preserve_format)
+                        for _ in range(chunk_size)
+                    ]
 
                 state["step"] += 1
-                state["inner_step"] += 1
 
-                m = state["m"]
+                m_1 = state["m_1"]
+                m_2 = state["m_2"]
                 v = state["v"]
                 m_buffer = state["m_buffer"]
 
-                # 1. Accumulate raw gradients into m_buffer, and update v like standard Adam
-                if state["inner_step"] == 1:
-                    m_buffer.copy_(grad)
-                else:
-                    m_buffer.mul_(alpha).add_(grad, alpha=(1.0 - alpha))
-                
+                # 1. Standard Adam update for m_1 and v
+                m_1.mul_(beta1).add_(grad, alpha=1.0 - beta1)
                 v.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
 
-                # 2. Update macroscopic moments strictly at chunk boundaries
-                # Note: We also trigger an update on step 1 to prevent division by zero (v=0)
-                if state["step"] == 1 or state["inner_step"] == chunk_size:
-                    state["chunk_step"] += 1
+                # 2. Update m_buffer
+                # m_buffer collects values during chunk_size steps
+                idx = state["step"] % chunk_size
+                m_buffer[idx].copy_(grad)
 
-                    # Update Rule: m = beta1 * m + (1 - beta1) * (m_buffer * scale)
-                    m.mul_(beta1).add_(m_buffer, alpha=(1.0 - beta1))
+                # 3. Update m_2 strictly at chunk boundaries
+                if state["step"] % chunk_size == 0:
+                    # m_2 is equivalent to the average value inside m_buffer
+                    m_2.zero_()
+                    for i in range(chunk_size):
+                        m_2.add_(m_buffer[i])
+                    m_2.div_(chunk_size)
 
-                    # Reset buffer for the next chunk interval
-                    m_buffer.zero_()
-                    state["inner_step"] = 0
+                # 4. Bias Correction 
+                bias_correction1 = 1.0 - beta1**state["step"]
+                bias_correction2 = 1.0 - beta2**state["step"]
 
-                # 3. Bias Correction 
-                T_m = state["chunk_step"]
-                T_v = state["step"]
-                bias_correction1 = 1.0 - beta1**T_m
-                bias_correction2 = 1.0 - beta2**T_v
-
-                m_hat = m / bias_correction1
+                m_1_hat = m_1 / bias_correction1
                 v_hat = v / bias_correction2
 
-                # 4. Local Parameter Update
-                # Combines the immediate local gradient with the macroscopic momentum (m_hat),
+                # 5. Local Parameter Update
+                # Combines the immediate local gradient with the macroscopic momentum (m_1_hat),
                 # scaled by the macroscopic variance (v_hat) to maintain Adam's adaptive properties.
                 denom = v_hat.sqrt().add_(eps)
 
-                # update_direction = (grad + alpha * m_hat) / denom
-                update_direction = (
-                    grad.mul(1.0 - alpha).add_(m_hat, alpha=alpha).div_(denom)
-                )
-
-                p.add_(update_direction, alpha=-lr)
+                # update_direction = (m_1_hat + alpha * m_2) / denom
+                if state["step"] == 1 or state["step"] % freq == 0:
+                    update_direction = (
+                        m_1_hat.add(m_2, alpha=alpha).div_(denom)
+                    )
+    
+                    p.add_(update_direction, alpha=-lr)
 
         return loss
