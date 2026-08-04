@@ -72,11 +72,6 @@ class NestedAdam(torch.optim.Optimizer):
                     continue
 
                 grad = p.grad
-
-                # Apply weight decay
-                if weight_decay != 0.0:
-                    grad = grad.add(p, alpha=weight_decay)
-
                 state = self.state[p]
 
                 # State initialization
@@ -143,5 +138,6 @@ class NestedAdam(torch.optim.Optimizer):
                     )
     
                     p.add_(update_direction, alpha=-lr)
+                    p.mul_(1.0 - lr * weight_decay)
 
         return loss

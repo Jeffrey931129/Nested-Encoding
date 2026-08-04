@@ -24,7 +24,7 @@ class Args:
     def __init__(self):
         # Core defaults
         self.sub = 1
-        self.model = "adam+nested"  
+        self.model = "AlexNet+NestedAdam"  
         self.batch_size = 32
         
         # I/O arguments
@@ -47,23 +47,49 @@ def train_and_evaluate(
     patience=15,
     log_file=None,
 ):
-    model = CustomModel(num_channels=eeg_channels, time_points=eeg_time_points, hidden_dim=512, num_layers=3).to(device)
+    if model_type == "AlexNet+NestedAdam":
+        import torchvision.models as models
+        model = models.alexnet(pretrained=False)
+        
+        # Keep original AlexNet structure, add a new head mapping 1000 -> EEG dimensions
+        layers = list(model.classifier.children())
+        layers.append(nn.ReLU(inplace=True))
+        layers.append(nn.Dropout(p=0.5))
+        layers.append(nn.Linear(1000, eeg_channels * eeg_time_points))
+        model.classifier = nn.Sequential(*layers)
+        
+        model = model.to(device)
 
-    # Configure parameter groups
-    param_fast = [
-        {"params": model.features[0:4].parameters(), "lr": config["lr"] * 0.1},
-        {"params": model.feature_projection.parameters(), "lr": config["lr"]},
-        {"params": model.lstm_layers[2].parameters(), "lr": config["lr"]},
-        {"params": model.channel_decoder.parameters(), "lr": config["lr"]},
-    ]
-    param_mid = [
-        {"params": model.features[4:9].parameters(), "lr": config["lr"] * 0.1},
-        {"params": model.lstm_layers[1].parameters(), "lr": config["lr"]},
-    ]
-    param_slow = [
-        {"params": model.features[9:13].parameters(), "lr": config["lr"] * 0.1},
-        {"params": model.lstm_layers[0].parameters(), "lr": config["lr"]},
-    ]
+        # Configure parameter groups for AlexNet
+        param_fast = [
+            {"params": model.features.parameters(), "lr": config["lr"] * 0.1},
+            {"params": model.classifier[0:3].parameters(), "lr": config["lr"]},
+            {"params": model.classifier[9:10].parameters(), "lr": config["lr"]},
+        ]
+        param_mid = [
+            {"params": model.classifier[3:6].parameters(), "lr": config["lr"]},
+        ]
+        param_slow = [
+            {"params": model.classifier[6:9].parameters(), "lr": config["lr"]},
+        ]
+    else:
+        model = CustomModel(num_channels=eeg_channels, time_points=eeg_time_points, hidden_dim=512, num_layers=3).to(device)
+    
+        # Configure parameter groups
+        param_fast = [
+            {"params": model.features[0:4].parameters(), "lr": config["lr"] * 0.1},
+            {"params": model.feature_projection.parameters(), "lr": config["lr"]},
+            {"params": model.lstm_layers[2].parameters(), "lr": config["lr"]},
+            {"params": model.channel_decoder.parameters(), "lr": config["lr"]},
+        ]
+        param_mid = [
+            {"params": model.features[4:9].parameters(), "lr": config["lr"] * 0.1},
+            {"params": model.lstm_layers[1].parameters(), "lr": config["lr"]},
+        ]
+        param_slow = [
+            {"params": model.features[9:13].parameters(), "lr": config["lr"] * 0.1},
+            {"params": model.lstm_layers[0].parameters(), "lr": config["lr"]},
+        ]
 
     # Select optimizer based on model_type
     f_fast, f_mid, f_slow = config.get("freq", (1, 1, 1))
@@ -111,7 +137,7 @@ def train_and_evaluate(
         )
         opt_mid = None
         opt_slow = None
-    elif model_type == "adam+nested":
+    elif model_type in ["adam+nested", "AlexNet+NestedAdam"]:
         opt_fast = NestedAdam(
             param_fast,
             lr=config["lr"],
@@ -210,7 +236,7 @@ def train_and_evaluate(
 
         if log_file:
             log_file.write(
-                f"      Epoch {epoch + 1:03d} | Train Loss: {train_loss / len(train_dl):.4f} | Val Loss: {val_loss:.4f}\n"
+                f"        Epoch {epoch + 1:03d} | Train Loss: {train_loss / len(train_dl):.4f} | Val Loss: {val_loss:.4f}\n"
             )
             log_file.flush()
 
@@ -294,16 +320,16 @@ if __name__ == "__main__":
             "batch_size": [32, 64],
             "weight_decay": [0, 1e-4, 1e-5],
         }
-    elif args.model == "adam+nested":
+    elif args.model in ["adam+nested", "AlexNet+NestedAdam"]:
         hyperparameter_space = {
-            "lr": [1e-5],
+            "lr": [5e-6, 1e-5, 2e-5],
             "batch_size": [32],
-            "alpha": [0.0, 0.01, 0.1],
+            "alpha": [0.0, 0.5, 1.0, 2.0],
             "beta": [(0.9, 0.999)],
             "eps": [1e-8],
-            "chunk_size": [(1, 1, 1), (1, 2, 4), (1, 4, 8)],
-            "freq": [(1, 1, 1), (1, 2, 4), (1, 4, 8)],
-            "weight_decay": [0.0],
+            "chunk_size": [(4, 4, 4), (8, 8, 8), (16, 16, 16)],
+            "freq": [(1, 4, 8), (1, 4, 16), (1, 4, 16)],
+            "weight_decay": [0.0, 1e-5],
         }
     grid = list(ParameterGrid(hyperparameter_space))
 
@@ -332,6 +358,7 @@ if __name__ == "__main__":
             
             for fold_idx, (train_index, val_index) in enumerate(kf.split(train_img_concepts)):
                 print(f"  --- Fold {fold_idx + 1}/5 ---")
+                fd.write(f"    --- Fold {fold_idx + 1}/5 ---\n")
                 
                 # Create validation mask for this fold
                 val_mask = np.zeros(16540, dtype=bool)
@@ -364,7 +391,7 @@ if __name__ == "__main__":
                 )
                 
                 fold_val_losses.append(best_val)
-                fd.write(f"  Fold {fold_idx + 1} Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
+                fd.write(f"    Fold {fold_idx + 1} Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
                 print(f"  -> Fold {fold_idx + 1} Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})")
 
             # Average Validation Loss across 5 folds
