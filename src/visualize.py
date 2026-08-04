@@ -11,11 +11,6 @@ import ast
 import pandas as pd
 
 # =============================================================================
-# Constants
-# =============================================================================
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# =============================================================================
 # Configuration Class
 # =============================================================================
 class Args:
@@ -25,6 +20,10 @@ class Args:
         
         # Optional: Specify which DNN folders to process (list of strings or None)
         self.target_dnns = None
+        
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        self.root_dir = os.path.dirname(current_dir)
+        self.project_dir = os.path.join(self.root_dir, "data")
 
 args = Args()
 
@@ -109,14 +108,14 @@ cmap = matplotlib.cm.get_cmap("tab20")
 # Main Logic
 # =============================================================================
 
-if not os.path.exists(ROOT_DIR):
-    print(f"Error: Project directory {ROOT_DIR} not found.")
+if not os.path.exists(args.root_dir):
+    print(f"Error: Project directory {args.root_dir} not found.")
     exit()
 
-print(f"Scanning project directory: {ROOT_DIR}...")
+print(f"Scanning project directory: {args.root_dir}...")
 try:
     dir = os.path.join(
-        ROOT_DIR, "experiment"
+        args.root_dir, "experiment"
     )
     subdirs = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
     subdirs.sort()
@@ -236,7 +235,7 @@ for i, item in enumerate(all_plottable_data):
 
     plt.plot(times[:p_len], mean_corr[:p_len], color=color, linewidth=3, label=label)
 
-nc_cache_dir = os.path.join(ROOT_DIR, "data", "results", f"sub-{args.sub:02d}", "correlation_bound")
+nc_cache_dir = os.path.join(args.project_dir, "results", f"sub-{args.sub:02d}", "correlation_bound")
 nc_files = [f for f in os.listdir(nc_cache_dir) if f.endswith(".npy")] if os.path.exists(nc_cache_dir) else []
 
 if nc_files:
@@ -276,7 +275,7 @@ plt.legend(fontsize=12, loc="upper left", bbox_to_anchor=(1, 1), frameon=False)
 plt.tight_layout()
 
 # Save Plot 1 as JPG, setting DPI=300 for high resolution
-out_dir = os.path.join(ROOT_DIR, "figures")
+out_dir = os.path.join(args.root_dir, "figures")
 os.makedirs(out_dir, exist_ok=True)
 plot1_filename = os.path.join(out_dir, "model_comparison.jpg")
 plt.savefig(plot1_filename, format="jpg", dpi=300)
@@ -394,9 +393,7 @@ else:
 # Plot 3 & 4: Hyperparameter Configuration Mean and Variance
 # =============================================================================
 print("Start parsing hyperparameter logs in the experiment folder...")
-script_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.dirname(script_dir)
-exp_dir = os.path.join(root_dir, "experiment")
+exp_dir = os.path.join(args.root_dir, "experiment")
 
 config_pattern = re.compile(r"\[\d+/\d+\] Config:\s*(\{.*\})")
 loss_pattern = re.compile(r"-> Best Val Loss:\s*([0-9.]+)")

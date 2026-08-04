@@ -47,7 +47,9 @@ class Args:
         self.batch_size = 32
         
         # I/O arguments
-        self.project_dir = "data"
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        root_dir = os.path.dirname(current_dir)
+        self.project_dir = os.path.join(root_dir, "data")
         
         # Combined analysis arguments
         self.corr_n_iter = 1000
