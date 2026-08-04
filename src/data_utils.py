@@ -178,15 +178,11 @@ def create_dataloader(
     ### Dataset class ###
     class EegDataset(Dataset):
         def __init__(
-            self, X, y, modeled_time_points, time, transform=None, target_transform=None
+            self, X, y, time, transform=None, target_transform=None
         ):
-            self.modeled_time_points = modeled_time_points
             self.time = time
             self.X = X
-            if self.modeled_time_points == "single":
-                self.y = y[:, :, self.time]
-            elif self.modeled_time_points == "all":
-                self.y = torch.reshape(y, (y.shape[0], -1))
+            self.y = torch.reshape(y, (y.shape[0], -1))
             self.transform = transform
             self.target_transform = target_transform
 
@@ -203,9 +199,9 @@ def create_dataloader(
             return image, target
 
     ### Convert the data to PyTorch's Dataset format ###
-    train_ds = EegDataset(X_train, y_train, args.modeled_time_points, time_point)
-    val_ds = EegDataset(X_val, y_val, args.modeled_time_points, time_point)
-    test_ds = EegDataset(X_test, y_test, args.modeled_time_points, time_point)
+    train_ds = EegDataset(X_train, y_train, time_point)
+    val_ds = EegDataset(X_val, y_val, time_point)
+    test_ds = EegDataset(X_test, y_test, time_point)
 
     ### Convert the Datasets to PyTorch's Dataloader format ###
     train_dl = DataLoader(

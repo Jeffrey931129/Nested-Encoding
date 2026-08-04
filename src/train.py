@@ -13,14 +13,15 @@ import random
 import torch
 from tqdm import tqdm
 from sklearn.utils import resample
+from sklearn.model_selection import KFold
 from copy import deepcopy
 from scipy.stats import pearsonr as corr
 from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 
 # Local utility imports
-from end_to_end_encoding_utils import load_images, load_eeg_data, create_dataloader
-from custom_model import CustomModel
+from data_utils import load_images, load_eeg_data, create_dataloader
+from model import CustomModel
 from nested_sgd import NestedSGD
 from nested_adam import NestedAdam
 
@@ -31,24 +32,22 @@ class Args:
     def __init__(self):
         # Core modeling arguments
         self.sub = 1
-        self.modeled_time_points = "all"
-        self.dnn = "adam+nested"
-        self.pretrained = True
+        self.dnn = "adam"
         self.epochs = 200
         self.patience = 30
-        self.lr = 0.00001
+        self.lr = 5e-6
         self.weight_decay = 0.0
         self.momentum = 0.9
         
         # Nested optimizer specific arguments
-        self.alpha = 0.1
+        self.alpha = 0.0
         self.beta = (0.9, 0.999)  # Natively defined as a tuple
-        self.freq = (1, 2, 4)
-        self.chunk_size = (1, 2, 4)
+        self.freq = (1, 1, 1)
+        self.chunk_size = (1, 1, 1)
         self.batch_size = 32
         
         # I/O arguments
-        self.project_dir = "project_directory"
+        self.project_dir = "data"
         
         # Combined analysis arguments
         self.corr_n_iter = 1000
@@ -242,13 +241,23 @@ def main():
     synthetic_data_flat = np.zeros(bio_test_shape)
     
     ptr = 0
+    test_loss = 0.0
     with torch.no_grad():
         for X, y in test_dl:
-            X = X.to(device)
+            X, y = X.to(device), y.to(device)
             batch_size = X.size(0)
+            
+            # Compute test loss
+            pred = best_model(X).squeeze()
+            t_loss = loss_fn(pred, y)
+            test_loss += t_loss.item() * batch_size
+            
+            # Store predictions
             preds = best_model(X).detach().cpu().numpy()
             synthetic_data_flat[ptr:ptr+batch_size] = preds
             ptr += batch_size
+            
+    test_loss /= len(test_dl.dataset)
 
     # Reshape back to the original y_test shape
     synthetic_data = np.reshape(synthetic_data_flat, synthetic_data.shape)
@@ -393,6 +402,7 @@ def main():
         "ci_lower_diff_noise_ceiling": ci_lower_diff, "ci_upper_diff_noise_ceiling": ci_upper_diff,
         "significance_diff_noise_ceiling": significance_diff,
         "times": times, "ch_names": ch_names,
+        "test_loss": test_loss,
     }
 
     stats_save_dir = os.path.join("experiment", "tmp")

@@ -29,11 +29,11 @@ conda activate eeg_encoding
 ## Data availability
 The source, raw and preprocessed EEG dataset, the training and test images and the DNN feature maps are available on [OSF][osf]. The ILSVRC-2012 validation and test images can be found on [ImageNet][imagenet]. To run the code, the data must be downloaded and placed into the following directories:
 
-* **Source EEG data:** `../project_directory/eeg_dataset/source_data/`.
-* **Raw EEG data:** `../project_directory/eeg_dataset/raw_data/`.
-* **Preprocessed EEG data:** `../project_directory/eeg_dataset/preprocessed_data/`.
-* **Training and test images; ILSVRC-2012 validation and test images:** `../project_directory/image_set/`.
-* **DNN feature maps:** `../project_directory/dnn_feature_maps/pca_feature_maps`.
+* **Source EEG data:** `./data/eeg_dataset/source_data/`.
+* **Raw EEG data:** `./data/eeg_dataset/raw_data/`.
+* **Preprocessed EEG data:** `./data/eeg_dataset/preprocessed_data/`.
+* **Training and test images; ILSVRC-2012 validation and test images:** `./data/image_set/`.
+* **DNN feature maps:** `./data/dnn_feature_maps/pca_feature_maps`.
 
 
 
@@ -42,9 +42,7 @@ The source, raw and preprocessed EEG dataset, the training and test images and t
 * **01_data_preparation:** convert the source EEG data into raw EEG data, reformat the resting state data, and extract behavioral results.
 * **02_eeg_preprocessing:** preprocess the raw EEG data.
 * **03_dnn_feature_maps_extraction:** extract the feature maps of all images using four DNN architectures (AlexNet, ResNet-50, CORnet-S, MoCo), and downsample them using principal component analysis (PCA).
-* **04_synthesizing_eeg_data:** synthesize the EEG responses to images through linearizing and end-to-end encoding models.
-* **05_synthetic_data_analyses:** perform the correlation, pairwise decoding and zero-shot identification analyses on the synthetic EEG data.
-* **06_plotting:** plot the analyses results.
+* **src:** synthesize the EEG responses to images through linearizing and end-to-end encoding models, and plot the analyses results.
 
 
 

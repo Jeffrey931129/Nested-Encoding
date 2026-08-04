@@ -9,12 +9,12 @@ from sklearn.model_selection import ParameterGrid, KFold
 from sklearn.utils import resample
 from nested_sgd import NestedSGD
 from nested_adam import NestedAdam
-from custom_model import CustomModel
+from model import CustomModel
 
 # Import your custom utilities
-from end_to_end_encoding_utils import load_images
-from end_to_end_encoding_utils import load_eeg_data
-from end_to_end_encoding_utils import create_dataloader
+from data_utils import load_images
+from data_utils import load_eeg_data
+from data_utils import create_dataloader
 
 
 # =============================================================================
@@ -24,12 +24,11 @@ class Args:
     def __init__(self):
         # Core defaults
         self.sub = 1
-        self.modeled_time_points = "all"
         self.model = "adam+nested"  
         self.batch_size = 32
         
         # I/O arguments
-        self.project_dir = "project_directory"
+        self.project_dir = "data"
 
 
 # =============================================================================

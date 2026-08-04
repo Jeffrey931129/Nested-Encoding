@@ -130,5 +130,5 @@ dmypy.json
 
 experiment
 experiment_tmp
-project_directory
+data/
 *.jpg

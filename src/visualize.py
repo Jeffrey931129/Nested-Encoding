@@ -1,4 +1,3 @@
-import argparse
 import os
 import math
 import numpy as np
@@ -12,23 +11,22 @@ import ast
 import pandas as pd
 
 # =============================================================================
-# Input arguments
+# Constants
 # =============================================================================
-parser = argparse.ArgumentParser(description="Recursive plotting script - Compare DNNs")
-parser.add_argument(
-    "--project_dir",
-    default=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    type=str,
-    help="Root directory containing DNN subfolders",
-)
-parser.add_argument("--sub", default=1, type=int)
-parser.add_argument(
-    "--target_dnns",
-    nargs="+",
-    default=None,
-    help="Optional: Specify which DNN folders to process",
-)
-args = parser.parse_args()
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# =============================================================================
+# Configuration Class
+# =============================================================================
+class Args:
+    def __init__(self):
+        # I/O arguments
+        self.sub = 1
+        
+        # Optional: Specify which DNN folders to process (list of strings or None)
+        self.target_dnns = None
+
+args = Args()
 
 # =============================================================================
 # Helper Functions
@@ -111,14 +109,14 @@ cmap = matplotlib.cm.get_cmap("tab20")
 # Main Logic
 # =============================================================================
 
-if not os.path.exists(args.project_dir):
-    print(f"Error: Project directory {args.project_dir} not found.")
+if not os.path.exists(ROOT_DIR):
+    print(f"Error: Project directory {ROOT_DIR} not found.")
     exit()
 
-print(f"Scanning project directory: {args.project_dir}...")
+print(f"Scanning project directory: {ROOT_DIR}...")
 try:
     dir = os.path.join(
-        args.project_dir, "experiment"
+        ROOT_DIR, "experiment"
     )
     subdirs = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
     subdirs.sort()
@@ -215,6 +213,9 @@ for i, item in enumerate(all_plottable_data):
     data_dict = item["data"]
     key = item["key"]
     label = item["label"]
+    
+    if "test_loss" in data_dict:
+        label += f" | Loss: {data_dict['test_loss']:.4f}"
 
     corr = data_dict["correlation"][key]
 
@@ -235,7 +236,7 @@ for i, item in enumerate(all_plottable_data):
 
     plt.plot(times[:p_len], mean_corr[:p_len], color=color, linewidth=3, label=label)
 
-nc_cache_dir = os.path.join(args.project_dir, "project_directory", "results", f"sub-{args.sub:02d}", "correlation_bound")
+nc_cache_dir = os.path.join(ROOT_DIR, "data", "results", f"sub-{args.sub:02d}", "correlation_bound")
 nc_files = [f for f in os.listdir(nc_cache_dir) if f.endswith(".npy")] if os.path.exists(nc_cache_dir) else []
 
 if nc_files:
@@ -275,7 +276,9 @@ plt.legend(fontsize=12, loc="upper left", bbox_to_anchor=(1, 1), frameon=False)
 plt.tight_layout()
 
 # Save Plot 1 as JPG, setting DPI=300 for high resolution
-plot1_filename = "model_comparison_2K.jpg"
+out_dir = os.path.join(ROOT_DIR, "figures")
+os.makedirs(out_dir, exist_ok=True)
+plot1_filename = os.path.join(out_dir, "model_comparison.jpg")
 plt.savefig(plot1_filename, format="jpg", dpi=300)
 print(f"Saved Plot 1: {plot1_filename} (Resolution 2560x1600)")
 plt.close(fig1)  # Free memory
@@ -382,7 +385,7 @@ else:
     except Exception as e:
         print(f"Layout adjustment warning: {e} (Ignored to ensure image output)")
 
-    plot2_filename = "channel_dynamics_2K.jpg"
+    plot2_filename = os.path.join(out_dir, "channel_dynamics.jpg")
     plt.savefig(plot2_filename, format="jpg", dpi=300)
     print(f"Saved Plot 2: {plot2_filename} (Resolution 2560x1600)")
     plt.close(fig2)  # Free memory
@@ -441,7 +444,7 @@ if os.path.exists(exp_dir):
                             })
                             current_config = None
 
-plot3_filename = "hyperparam_analyze_2K.jpg"
+plot3_filename = os.path.join(out_dir, "hyperparam_analysis.jpg")
 
 if all_results:
     df = pd.DataFrame(all_results)
@@ -514,4 +517,4 @@ try:
 except Exception as e:
     print(f"Warning: Could not open images automatically ({e})")
 
-print("All plotting tasks completed and saved as 2K JPG files.")
+print("All plotting tasks completed and saved as JPG files in the figures/ directory.")
