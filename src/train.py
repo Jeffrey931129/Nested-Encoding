@@ -32,18 +32,18 @@ class Args:
     def __init__(self):
         # Core modeling arguments
         self.sub = 1
-        self.dnn = "adam"
+        self.dnn = "adam+nested"
         self.epochs = 200
         self.patience = 30
-        self.lr = 5e-6
+        self.lr = 1e-5
         self.weight_decay = 0.0
         self.momentum = 0.9
         
         # Nested optimizer specific arguments
-        self.alpha = 0.0
+        self.alpha = 1.0
         self.beta = (0.9, 0.999)  # Natively defined as a tuple
-        self.freq = (1, 1, 1)
-        self.chunk_size = (1, 1, 1)
+        self.freq = (1, 8, 16)
+        self.chunk_size = (8, 8, 8)
         self.batch_size = 32
         
         # I/O arguments
@@ -53,7 +53,6 @@ class Args:
         
         # Combined analysis arguments
         self.corr_n_iter = 1000
-        self.stats_n_iter = 10000
 
 def main():
     # Initialize the configuration object directly
@@ -115,18 +114,16 @@ def main():
     c_fast, c_mid, c_slow = args.chunk_size
 
     param_fast = [
-        {"params": model.features[0:4].parameters(), "lr": args.lr * 0.1},
+        {"params": model.features.parameters(), "lr": args.lr * 0.1},
         {"params": model.feature_projection.parameters(), "lr": args.lr},
-        {"params": model.lstm_layers[2].parameters(), "lr": args.lr},
+        {"params": model.lstm_layers[0].parameters(), "lr": args.lr},
         {"params": model.channel_decoder.parameters(), "lr": args.lr},
     ]
     param_mid = [
-        {"params": model.features[4:9].parameters(), "lr": args.lr * 0.1},
         {"params": model.lstm_layers[1].parameters(), "lr": args.lr},
     ]
     param_slow = [
-        {"params": model.features[9:13].parameters(), "lr": args.lr * 0.1},
-        {"params": model.lstm_layers[0].parameters(), "lr": args.lr},
+        {"params": model.lstm_layers[2].parameters(), "lr": args.lr},
     ]
 
     if args.dnn == "gradient":
@@ -342,28 +339,6 @@ def main():
     for layer in correlation.keys():
         diff_noise_ceiling[layer] = noise_ceiling_low - correlation[layer]
 
-    ci_lower, ci_upper = {}, {}
-    ci_lower_diff, ci_upper_diff = {}, {}
-
-    # Option 1: Across-channel within-subject statistics
-    for layer in correlation.keys():
-        time_points = correlation[layer].shape[1]
-        ci_lower[layer], ci_upper[layer] = np.zeros(time_points), np.zeros(time_points)
-        ci_lower_diff[layer], ci_upper_diff[layer] = np.zeros(time_points), np.zeros(time_points)
-        
-        for t in tqdm(range(time_points)):
-            sample_dist = np.zeros(args.stats_n_iter)
-            sample_dist_diff = np.zeros(args.stats_n_iter)
-            for i in range(args.stats_n_iter):
-                # Resampling across the channel dimension
-                sample_dist[i] = np.mean(resample(correlation[layer][:, t]))
-                sample_dist_diff[i] = np.mean(resample(diff_noise_ceiling[layer][:, t]))
-            
-            ci_lower[layer][t] = np.percentile(sample_dist, 2.5)
-            ci_upper[layer][t] = np.percentile(sample_dist, 97.5)
-            ci_lower_diff[layer][t] = np.percentile(sample_dist_diff, 2.5)
-            ci_upper_diff[layer][t] = np.percentile(sample_dist_diff, 97.5)
-
     p_values, p_values_diff = {}, {}
     significance, significance_diff = {}, {}
 
@@ -398,10 +373,9 @@ def main():
     # =============================================================================
     stats_dict = {
         "correlation": correlation_stat,
-        "ci_lower": ci_lower, "ci_upper": ci_upper, "significance": significance,
+        "significance": significance,
         "noise_ceiling_low": nc_low_stat, "noise_ceiling_up": nc_up_stat,
         "diff_noise_ceiling": diff_noise_ceiling_stat,
-        "ci_lower_diff_noise_ceiling": ci_lower_diff, "ci_upper_diff_noise_ceiling": ci_upper_diff,
         "significance_diff_noise_ceiling": significance_diff,
         "times": times, "ch_names": ch_names,
         "test_loss": test_loss,

@@ -132,3 +132,6 @@ experiment
 experiment_tmp
 data/
 *.jpg
+
+# Agent configurations and rules
+.agents/

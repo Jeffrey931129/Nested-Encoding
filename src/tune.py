@@ -392,8 +392,9 @@ if __name__ == "__main__":
                 )
                 
                 fold_val_losses.append(best_val)
-                fd.write(f"    Fold {fold_idx + 1} Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
                 print(f"  -> Fold {fold_idx + 1} Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})")
+                f.write(f"    Fold {fold_idx + 1} Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
+                fd.write(f"    Fold {fold_idx + 1} Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
 
             # Average Validation Loss across 5 folds
             avg_val_loss = np.mean(fold_val_losses)

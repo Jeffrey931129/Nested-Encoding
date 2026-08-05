@@ -8,7 +8,7 @@ def analyze_hyperparam_log(log_path: str):
     # Matches the configuration dictionary string
     config_pattern = re.compile(r"\[\d+/\d+\] Config:\s*(\{.*\})")
     # Matches the validation loss float value
-    loss_pattern = re.compile(r"-> Best Val Loss:\s*([0-9.]+)")
+    loss_pattern = re.compile(r"-> (?:Average|Best) Val Loss:\s*([0-9.]+)")
 
     results = []
     current_config = None
@@ -55,7 +55,7 @@ def analyze_hyperparam_log(log_path: str):
     overall_mean = df["best_val_loss"].mean()
     overall_variance = df["best_val_loss"].var()
 
-    print("=== Global Loss Landscape Analysis ===")
+    print("\n=== Global Loss Landscape Analysis ===")
     print(f"Total configurations parsed : {len(df)}")
     print(f"Expected Val Loss (Mean)    : {overall_mean:.6f}")
     print(f"Dispersion (Variance)       : {overall_variance:.6e}\n")
@@ -82,6 +82,12 @@ def analyze_hyperparam_log(log_path: str):
                 stats_df.to_string(
                     index=False,
                     justify="right",
+                    col_space={
+                        param: 20,
+                        "Conditional_Mean": 30,
+                        "Conditional_Variance": 30,
+                        "Sample_Size": 20,
+                    },
                     formatters={
                         "Conditional_Mean": "{:.6f}".format,
                         "Conditional_Variance": "{:.6e}".format,
@@ -93,9 +99,22 @@ def analyze_hyperparam_log(log_path: str):
     return df
 
 
-# Example Execution:
-# Assuming your log file is named 'hparam_search.log'
 if __name__ == "__main__":
-    # Uncomment the line below to run with your specific log file path
-    df_results = analyze_hyperparam_log(r"experiment\nested_adam + nested_model\5conv2d + 3LSTM (10M)\.log")
-    pass
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Analyze hyperparameter log file.")
+    parser.add_argument(
+        "log_path", 
+        type=str, 
+        nargs="?", 
+        help="Path to the log file to analyze",
+    )
+    args = parser.parse_args()
+    
+    if not args.log_path:
+        args.log_path = input("Please enter log file path: ").strip()
+        
+    if args.log_path:
+        df_results = analyze_hyperparam_log(args.log_path)
+    else:
+        print("No path provided, exiting.")
