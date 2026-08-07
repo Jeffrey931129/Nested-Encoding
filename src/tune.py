@@ -171,7 +171,6 @@ def train_and_evaluate(
         )
 
     loss_fn = nn.MSELoss().to(device)
-    scaler = torch.amp.GradScaler("cuda") if device == "cuda" else None
 
     best_val_loss = float("inf")
     epochs_no_improve = 0
@@ -187,35 +186,19 @@ def train_and_evaluate(
         for batch_idx, (X, y) in enumerate(train_dl):
             current_step = global_step_offset + batch_idx + 1
             X, y = X.to(device), y.to(device)
-            if scaler:
-                with torch.autocast(device_type="cuda", dtype=torch.float16):
-                    pred = model(X).squeeze()
-                    loss = loss_fn(pred, y)
-                scaler.scale(loss).backward()
-
-                scaler.step(opt_fast)
-                opt_fast.zero_grad()
-                if opt_mid is not None:
-                    scaler.step(opt_mid)
-                    opt_mid.zero_grad()
-                if opt_slow is not None:
-                    scaler.step(opt_slow)
-                    opt_slow.zero_grad()
-
-                scaler.update()
-            else:
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 pred = model(X).squeeze()
                 loss = loss_fn(pred, y)
-                loss.backward()
+            loss.backward()
 
-                opt_fast.step()
-                opt_fast.zero_grad()
-                if opt_mid is not None:
-                    opt_mid.step()
-                    opt_mid.zero_grad()
-                if opt_slow is not None:
-                    opt_slow.step()
-                    opt_slow.zero_grad()
+            opt_fast.step()
+            opt_fast.zero_grad()
+            if opt_mid is not None:
+                opt_mid.step()
+                opt_mid.zero_grad()
+            if opt_slow is not None:
+                opt_slow.step()
+                opt_slow.zero_grad()
 
             train_loss += loss.item()
 

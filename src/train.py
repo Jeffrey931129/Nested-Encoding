@@ -43,7 +43,7 @@ class Args:
         self.alpha = 0.0
         self.beta = (0.9, 0.999, 0.9)  # Natively defined as a tuple
         self.freq = (1, 8, 16)
-        self.chunk_size = (64, 64, 64)
+        self.chunk_size = (8, 8, 8)
         self.batch_size = 32
         
         # I/O arguments
@@ -180,7 +180,6 @@ def main():
         opt_slow = NestedAdam(param_slow, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=c_slow, freq=f_slow)
 
     loss_fn = torch.nn.MSELoss().to(device)
-    scaler = torch.amp.GradScaler("cuda")
     torch.backends.cudnn.benchmark = True
 
     # =============================================================================
@@ -202,35 +201,19 @@ def main():
         for batch_idx, (X, y) in enumerate(train_dl):
             current_step = global_step_offset + batch_idx + 1
             X, y = X.to(device), y.to(device)
-            if scaler:
-                with torch.autocast(device_type="cuda", dtype=torch.float16):
-                    pred = model(X).squeeze()
-                    loss = loss_fn(pred, y)
-                scaler.scale(loss).backward()
-
-                scaler.step(opt_fast)
-                opt_fast.zero_grad()
-                if opt_mid is not None:
-                    scaler.step(opt_mid)
-                    opt_mid.zero_grad()
-                if opt_slow is not None:
-                    scaler.step(opt_slow)
-                    opt_slow.zero_grad()
-
-                scaler.update()
-            else:
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 pred = model(X).squeeze()
                 loss = loss_fn(pred, y)
-                loss.backward()
+            loss.backward()
 
-                opt_fast.step()
-                opt_fast.zero_grad()
-                if opt_mid is not None:
-                    opt_mid.step()
-                    opt_mid.zero_grad()
-                if opt_slow is not None:
-                    opt_slow.step()
-                    opt_slow.zero_grad()
+            opt_fast.step()
+            opt_fast.zero_grad()
+            if opt_mid is not None:
+                opt_mid.step()
+                opt_mid.zero_grad()
+            if opt_slow is not None:
+                opt_slow.step()
+                opt_slow.zero_grad()
 
             train_loss += loss.item() * X.size(0)
         train_loss /= len(train_dl.dataset)
