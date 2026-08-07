@@ -7,10 +7,11 @@ class NestedAdam(torch.optim.Optimizer):
     """
     A custom Adam optimizer with low-frequency, macroscopic moment updates.
 
-    The first and second moments (m, v) are only updated every `chunk_size` steps
-    using the average of the accumulated gradients within the chunk.
-    Local parameter updates use the raw stochastic gradients combined with the
-    bias-corrected macroscopic moments.
+    The standard first and second moments (m_1, v) are updated at every step,
+    while an additional macroscopic first moment (m_2) is updated every `chunk_size`
+    steps using the average of the accumulated gradients within the chunk.
+    Local parameter updates use standard bias-corrected moments combined with the
+    bias-corrected macroscopic moment.
     """
 
     def __init__(
@@ -18,7 +19,7 @@ class NestedAdam(torch.optim.Optimizer):
         params: Iterable[torch.nn.Parameter],
         lr: float = 1e-3,
         alpha: float = 1.0,
-        beta: Tuple[float, float] = (0.9, 0.999),
+        beta: Tuple[float, float] = (0.9, 0.999, 0.9),
         eps: float = 1e-8,
         freq: int = 1,
         chunk_size: int = 4,
@@ -30,6 +31,8 @@ class NestedAdam(torch.optim.Optimizer):
             raise ValueError(f"Invalid beta parameter at index 0: {beta[0]}")
         if not 0.0 <= beta[1] < 1.0:
             raise ValueError(f"Invalid beta parameter at index 1: {beta[1]}")
+        if not 0.0 <= beta[2] < 1.0:
+            raise ValueError(f"Invalid beta parameter at index 2: {beta[2]}")
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon value: {eps}")
         if freq < 1:
@@ -61,7 +64,7 @@ class NestedAdam(torch.optim.Optimizer):
         for group in self.param_groups:
             lr = group["lr"]
             alpha = group["alpha"]
-            beta1, beta2 = group["beta"]
+            beta1, beta2, beta3 = group["beta"]
             eps = group["eps"]
             freq = group["freq"]
             chunk_size = group["chunk_size"]
@@ -78,22 +81,23 @@ class NestedAdam(torch.optim.Optimizer):
                 if not state:
                     state["step"] = 0
 
-                    # Macroscopic moments (updated low-frequency)
+                    # Standard moments (updated every step)
                     state["m_1"] = torch.zeros_like(
-                        p, memory_format=torch.preserve_format
-                    )
-                    state["m_2"] = torch.zeros_like(
                         p, memory_format=torch.preserve_format
                     )
                     state["v"] = torch.zeros_like(
                         p, memory_format=torch.preserve_format
                     )
+                    
+                    # Macroscopic moment (updated low-frequency)
+                    state["m_2"] = torch.zeros_like(
+                        p, memory_format=torch.preserve_format
+                    )
 
                     # High-frequency accumulation buffers
-                    state["m_buffer"] = [
-                        torch.zeros_like(p, memory_format=torch.preserve_format)
-                        for _ in range(chunk_size)
-                    ]
+                    state["m_buffer"] = torch.zeros_like(
+                        p, memory_format=torch.preserve_format
+                    )
 
                 state["step"] += 1
 
@@ -108,36 +112,37 @@ class NestedAdam(torch.optim.Optimizer):
 
                 # 2. Update m_buffer
                 # m_buffer collects values during chunk_size steps
-                idx = state["step"] % chunk_size
-                m_buffer[idx].copy_(grad)
+                m_buffer.add_(grad)
 
                 # 3. Update m_2 strictly at chunk boundaries
                 if state["step"] % chunk_size == 0:
                     # m_2 is equivalent to the average value inside m_buffer
-                    m_2.zero_()
-                    for i in range(chunk_size):
-                        m_2.add_(m_buffer[i])
-                    m_2.div_(chunk_size)
+                    # Optimized to avoid creating a temporary tensor (m_buffer / chunk_size)
+                    m_2.mul_(beta3).add_(m_buffer, alpha=(1.0 - beta3) / chunk_size)
+                    m_buffer.zero_()
 
                 # 4. Bias Correction 
                 bias_correction1 = 1.0 - beta1**state["step"]
                 bias_correction2 = 1.0 - beta2**state["step"]
+                bias_correction3 = 1.0 - beta3**max(1, state["step"] // chunk_size)
 
                 m_1_hat = m_1 / bias_correction1
+                m_2_hat = m_2 / bias_correction3
                 v_hat = v / bias_correction2
 
                 # 5. Local Parameter Update
-                # Combines the immediate local gradient with the macroscopic momentum (m_1_hat),
-                # scaled by the macroscopic variance (v_hat) to maintain Adam's adaptive properties.
+                # Combines the standard momentum (m_1_hat) with the macroscopic momentum (m_2_hat),
+                # scaled by the standard variance (v_hat) to maintain Adam's adaptive properties.
                 denom = v_hat.sqrt().add_(eps)
 
-                # update_direction = (m_1_hat + alpha * m_2) / denom
+                # update_direction = (m_1_hat + alpha * m_2_hat) / denom
                 if state["step"] == 1 or state["step"] % freq == 0:
                     update_direction = (
-                        m_1_hat.add(m_2, alpha=alpha).div_(denom)
+                        m_1_hat.add(m_2_hat, alpha=alpha).div_(denom)
                     )
     
-                    p.add_(update_direction, alpha=-lr)
+                    # Standard AdamW applies weight decay before the gradient update
                     p.mul_(1.0 - lr * weight_decay)
+                    p.add_(update_direction, alpha=-lr)
 
         return loss

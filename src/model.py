@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class CustomModel(nn.Module):
-    def __init__(self, num_channels=17, time_points=100, hidden_dim=512, num_layers=3):
+    def __init__(self, num_channels=17, time_points=100, hidden_dim=512, num_layers=1):
         super(CustomModel, self).__init__()
         self.num_channels = num_channels
         self.time_points = time_points
@@ -26,9 +26,14 @@ class CustomModel(nn.Module):
         )
         self.avgpool = nn.AdaptiveAvgPool2d((3, 3))
         self.feature_projection = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(256 * 9, hidden_dim),
-            nn.ReLU(inplace=True)
+            nn.Dropout(p=0.2),
+            nn.Linear(256 * 9, 1024),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.2),
+            nn.Linear(1024, 1024),
+            nn.ReLU(inplace=True),
+            nn.Linear(1024, hidden_dim),
+            nn.ReLU(inplace=True),
         )
         self.lstm_layers = nn.ModuleList()
         for _ in range(num_layers):

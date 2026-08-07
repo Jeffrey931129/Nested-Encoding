@@ -32,58 +32,7 @@ args = Args()
 # =============================================================================
 
 
-def find_files_recursive(current_dir):
-    """
-    Manually search directories recursively using os.listdir
-    """
-    found_files = []
 
-    try:
-        entries = os.listdir(current_dir)
-    except OSError as e:
-        print(f"Warning: Cannot read directory {current_dir} ({e}), skipping.")
-        return []
-
-    entries.sort()
-
-    for entry in entries:
-        full_path = os.path.join(current_dir, entry)
-
-        if os.path.isdir(full_path):
-            found_files.extend(find_files_recursive(full_path))
-
-        elif os.path.isfile(full_path) and entry.endswith(".npy"):
-            if entry == ".npy":
-                filename_label = os.path.basename(current_dir)
-            else:
-                filename_label = os.path.splitext(entry)[0]
-            parent_folder = os.path.basename(current_dir)
-
-            found_files.append(
-                {"path": full_path, "filename": filename_label, "parent": parent_folder}
-            )
-
-    return found_files
-
-
-def resolve_labels(file_list):
-    """
-    Handle filename conflicts within a single DNN
-    """
-    label_counts = defaultdict(int)
-    for item in file_list:
-        label_counts[item["filename"]] += 1
-
-    final_output = []
-    for item in file_list:
-        if label_counts[item["filename"]] > 1:
-            label = f"{item['parent']}_{item['filename']}"
-        else:
-            label = item["filename"]
-        final_output.append((item["path"], label))
-
-    final_output.sort(key=lambda x: x[1])
-    return final_output
 
 
 # =============================================================================
@@ -102,7 +51,7 @@ color_noise_ceiling = (150 / 255, 150 / 255, 150 / 255)
 
 import matplotlib.cm as cm
 
-cmap = matplotlib.cm.get_cmap("tab20")
+cmap = matplotlib.colormaps.get_cmap("tab20")
 
 # =============================================================================
 # Main Logic
@@ -112,71 +61,67 @@ if not os.path.exists(args.root_dir):
     print(f"Error: Project directory {args.root_dir} not found.")
     exit()
 
-print(f"Scanning project directory: {args.root_dir}...")
+
 try:
     dir = os.path.join(
         args.root_dir, "experiment"
     )
-    subdirs = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
-    subdirs.sort()
 except OSError as e:
     print(f"Error: Cannot read project directory ({e})")
     exit()
 
-if args.target_dnns:
-    dnn_groups = [d for d in subdirs if d in args.target_dnns]
-else:
-    dnn_groups = subdirs
-
-if not dnn_groups:
-    print("No DNN folders found.")
-    exit()
-
-print(f"Preparing to process the following DNN models: {dnn_groups}")
-
 # --- Step 1: Collect all data ---
 all_plottable_data = []
 
-for dnn_name in dnn_groups:
-    print(f"Reading DNN: {dnn_name}")
-    dnn_path = os.path.join(dir, dnn_name)
+for root_path, dirs, files in os.walk(dir):
+    rel_path = os.path.relpath(root_path, dir)
+    if rel_path != '.':
+        top_level_dir = rel_path.split(os.sep)[0]
+        if args.target_dnns and top_level_dir not in args.target_dnns:
+            continue
+            
+    for file in files:
+        if file.endswith(".npy"):
+            fpath = os.path.join(root_path, file)
+            
+            if rel_path == '.':
+                folder_label = "experiment"
+            else:
+                folder_label = rel_path.replace(os.sep, " | ")
+                
+            try:
+                data = np.load(fpath, allow_pickle=True).item()
 
-    raw_files = find_files_recursive(dnn_path)
-    if not raw_files:
-        continue
+                if "correlation" not in data or "times" not in data:
+                    continue
+                keys = list(data["correlation"].keys())
+                if not keys:
+                    continue
 
-    files_info = resolve_labels(raw_files)
+                target_key = keys[0]
+                
+                if file == ".npy":
+                    full_label = folder_label
+                else:
+                    full_label = f"{folder_label} | {os.path.splitext(file)[0]}"
 
-    for fpath, label in files_info:
-        try:
-            data = np.load(fpath, allow_pickle=True).item()
+                all_plottable_data.append(
+                    {
+                        "label": full_label,
+                        "data": data,
+                        "key": target_key,
+                        "dnn_group": folder_label,
+                    }
+                )
 
-            if "correlation" not in data or "times" not in data:
-                continue
-            keys = list(data["correlation"].keys())
-            if not keys:
-                continue
-
-            target_key = keys[0]
-            full_label = f"{dnn_name} | {label}"
-
-            all_plottable_data.append(
-                {
-                    "label": full_label,
-                    "data": data,
-                    "key": target_key,
-                    "dnn_group": dnn_name,
-                }
-            )
-
-        except Exception as e:
-            print(f"  Cannot read {os.path.basename(fpath)}: {e}")
+            except Exception as e:
+                print(f"  Cannot read {os.path.basename(fpath)}: {e}")
 
 if not all_plottable_data:
     print("Error: No valid data was read.")
     exit()
 
-print(f"Collected a total of {len(all_plottable_data)} data entries, starting to plot...")
+
 
 times = all_plottable_data[0]["data"]["times"]
 num_total = len(all_plottable_data)
@@ -199,9 +144,10 @@ for i, item in enumerate(all_plottable_data):
 # =============================================================================
 # Plot 1: Comparison Line Plot (All in One)
 # =============================================================================
-# Set figsize to 32x20 for 2K width resolution (2560 pixels)
-fig1 = plt.figure(figsize=(32, 20))
-plt.title(f"Model Comparison ({len(dnn_groups)} DNNs)", fontsize=30, pad=20)
+# Set figsize to 32x18 and DPI to 120 for 4K resolution (3840x2160)
+fig1 = plt.figure(figsize=(32, 18))
+unique_groups = set([item["dnn_group"].split(" | ")[0] for item in all_plottable_data])
+plt.title(f"Model Comparison ({len(unique_groups)} Groups)", fontsize=30, pad=20)
 
 plt.plot(
     [-10, 10], [0, 0], "k--", [0, 0], [10, -10], "k--", label="_nolegend_", linewidth=3
@@ -220,16 +166,10 @@ for i, item in enumerate(all_plottable_data):
 
     if corr.ndim == 3:
         mean_corr = np.mean(np.mean(corr, 0), 0)
-        ci_lo = data_dict["ci_lower"][key]
-        ci_up = data_dict["ci_upper"][key]
     elif corr.ndim == 2:
         mean_corr = np.mean(corr, 0)
-        ci_lo = data_dict["ci_lower"][key]
-        ci_up = data_dict["ci_upper"][key]
     else:
         mean_corr = corr
-        ci_lo = mean_corr
-        ci_up = mean_corr
 
     p_len = min(len(times), len(mean_corr))
 
@@ -278,8 +218,8 @@ plt.tight_layout()
 out_dir = os.path.join(args.root_dir, "figures")
 os.makedirs(out_dir, exist_ok=True)
 plot1_filename = os.path.join(out_dir, "model_comparison.jpg")
-plt.savefig(plot1_filename, format="jpg", dpi=300)
-print(f"Saved Plot 1: {plot1_filename} (Resolution 2560x1600)")
+plt.savefig(plot1_filename, format="jpg", dpi=120)
+
 plt.close(fig1)  # Free memory
 
 # =============================================================================
@@ -312,17 +252,20 @@ else:
     cols = 4
     rows = int(math.ceil(plot_channels / cols))
 
-    # Re-call plt.figure and force figsize to 32x20 as requested
-    fig2 = plt.figure(figsize=(32, 20))
+    # Re-call plt.figure and force figsize to 32x18 and DPI to 120 for 4K resolution (3840x2160)
+    fig2 = plt.figure(figsize=(32, 18))
     fig2.suptitle(
         f"Time-Resolved Encoding Performance per Channel", fontsize=20, y=1.05
     )
 
+    ch_names = ['Pz', 'P3', 'P7', 'O1', 'Oz', 'O2', 'P4', 'P8', 'P1', 'P5', 'PO7', 'PO3', 'POz', 'PO4', 'PO8', 'P6', 'P2']
+
     for c in range(plot_channels):
         # Manually create subplots one by one to replace the original plt.subplots
         ax = fig2.add_subplot(rows, cols, c + 1)
-
-        ax.set_title(f"Channel {c}", fontsize=12)
+        
+        ch_title = ch_names[c] if c < len(ch_names) else f"Channel {c}"
+        ax.set_title(ch_title, fontsize=12)
         ax.plot([min(times), max(times)], [0, 0], "k--", linewidth=1.5)
 
         for i, item in enumerate(all_plottable_data):
@@ -385,18 +328,18 @@ else:
         print(f"Layout adjustment warning: {e} (Ignored to ensure image output)")
 
     plot2_filename = os.path.join(out_dir, "channel_dynamics.jpg")
-    plt.savefig(plot2_filename, format="jpg", dpi=300)
-    print(f"Saved Plot 2: {plot2_filename} (Resolution 2560x1600)")
+    plt.savefig(plot2_filename, format="jpg", dpi=120)
+
     plt.close(fig2)  # Free memory
 
 # =============================================================================
 # Plot 3 & 4: Hyperparameter Configuration Mean and Variance
 # =============================================================================
-print("Start parsing hyperparameter logs in the experiment folder...")
+
 exp_dir = os.path.join(args.root_dir, "experiment")
 
 config_pattern = re.compile(r"\[\d+/\d+\] Config:\s*(\{.*\})")
-loss_pattern = re.compile(r"-> Best Val Loss:\s*([0-9.]+)")
+loss_pattern = re.compile(r"-> (?:Best|Average) Val Loss:\s*([0-9.]+)")
 
 all_results = []
 if os.path.exists(exp_dir):
@@ -454,7 +397,7 @@ if all_results:
     cmap_hp = plt.get_cmap("tab20")
     
     # --- Plot 3: Mean and Std as points on two vertical lines ---
-    fig3, ax1 = plt.subplots(figsize=(32, 20))
+    fig3, ax1 = plt.subplots(figsize=(32, 18))
     plt.title(r"Validation Loss Performance per Subfolder", fontsize=30, pad=20)
     
     ax1.set_xlim(-0.5, 1.5)
@@ -490,8 +433,8 @@ if all_results:
     ax1.legend(fontsize=20, loc="upper left", bbox_to_anchor=(1.05, 1), frameon=False)
     
     plt.tight_layout()
-    plt.savefig(plot3_filename, format="jpg", dpi=300)
-    print(f"Saved Plot 3: {plot3_filename} (Resolution 2560x1600)")
+    plt.savefig(plot3_filename, format="jpg", dpi=120)
+
     plt.close(fig3)
 else:
     print("No valid log data found in the experiment folder.")
@@ -514,4 +457,4 @@ try:
 except Exception as e:
     print(f"Warning: Could not open images automatically ({e})")
 
-print("All plotting tasks completed and saved as JPG files in the figures/ directory.")
+

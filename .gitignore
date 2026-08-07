@@ -131,7 +131,7 @@ dmypy.json
 experiment
 experiment_tmp
 data/
-*.jpg
+figures/
 
 # Agent configurations and rules
 .agents/
