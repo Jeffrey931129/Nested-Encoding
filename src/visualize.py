@@ -28,14 +28,6 @@ class Args:
 args = Args()
 
 # =============================================================================
-# Helper Functions
-# =============================================================================
-
-
-
-
-
-# =============================================================================
 # Plotting Configuration
 # =============================================================================
 matplotlib.rcParams["font.sans-serif"] = "DejaVu Sans"
@@ -439,22 +431,22 @@ if all_results:
 else:
     print("No valid log data found in the experiment folder.")
 
-try:
-    if os.name == 'nt':
-        subprocess.Popen(["explorer", os.path.abspath(plot1_filename)])
-        time.sleep(1)
-        subprocess.Popen(["explorer", os.path.abspath(plot2_filename)])
-        time.sleep(1)
-        if os.path.exists(plot3_filename):
-            subprocess.Popen(["explorer", os.path.abspath(plot3_filename)])
-    else:
-        import platform
-        opener = "open" if platform.system() == "Darwin" else "xdg-open"
-        subprocess.Popen([opener, os.path.abspath(plot1_filename)])
-        subprocess.Popen([opener, os.path.abspath(plot2_filename)])
-        if os.path.exists(plot3_filename):
-            subprocess.Popen([opener, os.path.abspath(plot3_filename)])
-except Exception as e:
-    print(f"Warning: Could not open images automatically ({e})")
+# try:
+#     if os.name == 'nt':
+#         subprocess.Popen(["explorer", os.path.abspath(plot1_filename)])
+#         time.sleep(1)
+#         subprocess.Popen(["explorer", os.path.abspath(plot2_filename)])
+#         time.sleep(1)
+#         if os.path.exists(plot3_filename):
+#             subprocess.Popen(["explorer", os.path.abspath(plot3_filename)])
+#     else:
+#         import platform
+#         opener = "open" if platform.system() == "Darwin" else "xdg-open"
+#         subprocess.Popen([opener, os.path.abspath(plot1_filename)])
+#         subprocess.Popen([opener, os.path.abspath(plot2_filename)])
+#         if os.path.exists(plot3_filename):
+#             subprocess.Popen([opener, os.path.abspath(plot3_filename)])
+# except Exception as e:
+#     print(f"Warning: Could not open images automatically ({e})")
 
 

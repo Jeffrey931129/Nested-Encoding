@@ -8,12 +8,12 @@ in memory, avoiding redundant disk I/O operations.
 """
 
 import os
+import time
 import numpy as np
 import random
 import torch
 from tqdm import tqdm
 from sklearn.utils import resample
-from sklearn.model_selection import KFold
 from copy import deepcopy
 from scipy.stats import pearsonr as corr
 from scipy.stats import ttest_1samp
@@ -33,14 +33,14 @@ class Args:
         # Core modeling arguments
         self.sub = 1
         self.dnn = "adam+nested"
-        self.epochs = 200
+        self.epochs = 1
         self.patience = 30
         self.lr = 1e-5
         self.weight_decay = 0.0
         self.momentum = 0.9
         
         # Nested optimizer specific arguments
-        self.alpha = 0.0
+        self.alpha = 0.5
         self.beta = (0.9, 0.999, 0.9)  # Natively defined as a tuple
         self.freq = (1, 8, 16)
         self.chunk_size = (8, 8, 8)
@@ -92,7 +92,7 @@ def main():
 
     if os.path.exists(img_cache_path):
         print(f"Loading cached image data from {img_cache_path}...")
-        img_cache_data = torch.load(img_cache_path)
+        img_cache_data = torch.load(img_cache_path, weights_only=False)
         X_train = img_cache_data["X_train"]
         X_val = img_cache_data["X_val"]
         X_test = img_cache_data["X_test"]
@@ -112,7 +112,7 @@ def main():
 
     if os.path.exists(cache_path):
         print(f"Loading cached averaged EEG data from {cache_path}...")
-        cache_data = torch.load(cache_path)
+        cache_data = torch.load(cache_path, weights_only=False)
         y_train = cache_data["y_train"]
         y_val = cache_data["y_val"]
         y_test = cache_data["y_test"]
@@ -148,9 +148,6 @@ def main():
     # print(model)
     model.to(device)
 
-    f_fast, f_mid, f_slow = args.freq
-    c_fast, c_mid, c_slow = args.chunk_size
-
     param_fast = [
         {"params": model.features.parameters(), "lr": args.lr * 0.1},
         {"params": model.feature_projection[1].parameters(), "lr": args.lr},
@@ -164,20 +161,16 @@ def main():
         {"params": model.feature_projection[6].parameters(), "lr": args.lr},
     ]
 
+    params_list = [param_fast, param_mid, param_slow]
+
     if args.dnn == "gradient":
-        opt_fast = torch.optim.SGD(param_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)
-        opt_mid, opt_slow = None, None
+        opts = [torch.optim.SGD(param_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)]
     elif args.dnn == "gradient+nested":
-        opt_fast = NestedSGD(param_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=c_fast)
-        opt_mid = NestedSGD(param_mid, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=c_mid)
-        opt_slow = NestedSGD(param_slow, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=c_slow)
+        opts = [NestedSGD(p, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=args.chunk_size[i]) for i, p in enumerate(params_list)]
     elif args.dnn == "adam":
-        opt_fast = torch.optim.AdamW(param_fast, lr=args.lr, weight_decay=args.weight_decay)
-        opt_mid, opt_slow = None, None
+        opts = [torch.optim.AdamW(param_fast, lr=args.lr, weight_decay=args.weight_decay)]
     elif args.dnn == "adam+nested":
-        opt_fast = NestedAdam(param_fast, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=c_fast, freq=f_fast)
-        opt_mid = NestedAdam(param_mid, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=c_mid, freq=f_mid)
-        opt_slow = NestedAdam(param_slow, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=c_slow, freq=f_slow)
+        opts = [NestedAdam(p, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=args.chunk_size[i], freq=1) for i, p in enumerate(params_list)]
 
     loss_fn = torch.nn.MSELoss().to(device)
     torch.backends.cudnn.benchmark = True
@@ -186,37 +179,54 @@ def main():
     # 4. Training Loop
     # =============================================================================
     print("\n", "=" * 10, "Training Model", "=" * 10)
+    start_time = time.time()
     best_val_loss = float("inf")
     epochs_no_improve = 0
     best_model = None
 
     # Progress bar for Epochs within this specific combination
     pbar = tqdm(range(args.epochs), unit="epoch", leave=False)
+    X_buffer, y_buffer = [None] * args.freq[-1], [None] * args.freq[-1]
 
     for epoch in pbar:
         # --- Training ---
         model.train()
-        train_loss = 0.0
         global_step_offset = epoch * len(train_dl)
         for batch_idx, (X, y) in enumerate(train_dl):
             current_step = global_step_offset + batch_idx + 1
-            X, y = X.to(device), y.to(device)
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                pred = model(X).squeeze()
-                loss = loss_fn(pred, y)
-            loss.backward()
+            data_idx = current_step % args.freq[-1]
+            X_buffer[data_idx], y_buffer[data_idx] = X.to(device), y.to(device)
 
-            opt_fast.step()
-            opt_fast.zero_grad()
-            if opt_mid is not None:
-                opt_mid.step()
-                opt_mid.zero_grad()
-            if opt_slow is not None:
-                opt_slow.step()
-                opt_slow.zero_grad()
+            should_update = [current_step % f == 0 for f in args.freq]
+            update_idx = None
+            for i in range(len(should_update)-1, -1, -1):
+                if should_update[i]:
+                    update_idx = i 
+                    break
+            if update_idx != None:
+                while update_idx != None:
+                    next_update_idx = None
+                    for i in range(update_idx-1, -1, -1):
+                        if should_update[i]:
+                            next_update_idx = i
+                            break
+                    end = args.freq[next_update_idx] if next_update_idx != None else 0
+                    X = torch.cat([X_buffer[i%args.freq[-1]] for i in range(data_idx-args.freq[update_idx]+1, data_idx-end+1)], dim=0)
+                    y = torch.cat([y_buffer[i%args.freq[-1]] for i in range(data_idx-args.freq[update_idx]+1, data_idx-end+1)], dim=0)
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        pred = model(X).squeeze()
+                        loss = loss_fn(pred, y)
+                    loss.backward()
+                    for i in range(update_idx-1, -1, -1):
+                        opts[i].zero_grad()
+                    update_idx = next_update_idx
 
-            train_loss += loss.item() * X.size(0)
-        train_loss /= len(train_dl.dataset)
+                for i in range(len(opts)):
+                    if current_step % args.freq[i] == 0:
+                        opts[i].step()
+
+                for opt in opts:
+                    opt.zero_grad()
 
         # --- Validation ---
         model.eval()
@@ -224,8 +234,9 @@ def main():
         with torch.no_grad():
             for X, y in val_dl:
                 X, y = X.to(device), y.to(device)
-                pred = model(X).squeeze()
-                v_loss = loss_fn(pred, y)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    pred = model(X).squeeze()
+                    v_loss = loss_fn(pred, y)
                 val_loss += v_loss.item() * X.size(0)
         val_loss /= len(val_dl.dataset)
 
@@ -248,6 +259,7 @@ def main():
             break
             
     print(f"Best Epochs: {best_epochs[0]}, Best Loss: {best_val_loss:.4f}")
+    print(f"Training Time: {time.time() - start_time:.2f} seconds")
     del model
     if device == "cuda":
         torch.cuda.empty_cache()
@@ -268,12 +280,13 @@ def main():
             batch_size = X.size(0)
             
             # Compute test loss and predictions (avoid duplicate model call)
-            pred = best_model(X)
-            t_loss = loss_fn(pred.squeeze(), y)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                pred = best_model(X)
+                t_loss = loss_fn(pred.squeeze(), y)
             test_loss += t_loss.item() * batch_size
             
             # Store predictions directly reshaped to avoid unnecessary flat arrays
-            preds = pred.detach().cpu().numpy().reshape(batch_size, eeg_channels, eeg_time_points)
+            preds = pred.detach().float().cpu().numpy().reshape(batch_size, eeg_channels, eeg_time_points)
             synthetic_data[ptr:ptr+batch_size] = preds
             ptr += batch_size
             
