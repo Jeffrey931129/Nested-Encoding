@@ -9,6 +9,7 @@ import subprocess
 import re
 import ast
 import pandas as pd
+from data_utils import data_dir, experiment_dir, figure_dir
 
 # =============================================================================
 # Configuration Class
@@ -21,9 +22,7 @@ class Args:
         # Optional: Specify which DNN folders to process (list of strings or None)
         self.target_dnns = None
         
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        self.root_dir = os.path.dirname(current_dir)
-        self.project_dir = os.path.join(self.root_dir, "data")
+
 
 args = Args()
 
@@ -49,18 +48,11 @@ cmap = matplotlib.colormaps.get_cmap("tab20")
 # Main Logic
 # =============================================================================
 
-if not os.path.exists(args.root_dir):
-    print(f"Error: Project directory {args.root_dir} not found.")
+if not os.path.exists(experiment_dir):
+    print(f"Error: Experiment directory {experiment_dir} not found.")
     exit()
 
-
-try:
-    dir = os.path.join(
-        args.root_dir, "experiment"
-    )
-except OSError as e:
-    print(f"Error: Cannot read project directory ({e})")
-    exit()
+dir = experiment_dir
 
 # --- Step 1: Collect all data ---
 all_plottable_data = []
@@ -167,12 +159,13 @@ for i, item in enumerate(all_plottable_data):
 
     plt.plot(times[:p_len], mean_corr[:p_len], color=color, linewidth=3, label=label)
 
-nc_cache_dir = os.path.join(args.project_dir, "results", f"sub-{args.sub:02d}", "correlation_bound")
-nc_files = [f for f in os.listdir(nc_cache_dir) if f.endswith(".npy")] if os.path.exists(nc_cache_dir) else []
+nc_cache_dir = os.path.join(data_dir, "cache")
+prefix = f"sub-{args.sub:02d}_noise_ceiling_"
+nc_files = [f for f in os.listdir(nc_cache_dir) if f.startswith(prefix) and f.endswith(".npy")] if os.path.exists(nc_cache_dir) else []
 
 if nc_files:
-    # Prioritize selecting the cache file with the highest number of iterations (largest filename number)
-    nc_files.sort(key=lambda x: int(os.path.splitext(x)[0]) if os.path.splitext(x)[0].isdigit() else 0, reverse=True)
+    # Prioritize selecting the cache file with the highest number of iterations
+    nc_files.sort(key=lambda x: int(x[len(prefix):-4]) if x[len(prefix):-4].isdigit() else 0, reverse=True)
     nc_cache_path = os.path.join(nc_cache_dir, nc_files[0])
     nc_cache_data = np.load(nc_cache_path, allow_pickle=True).item()
     nc_low = nc_cache_data["noise_ceiling_low"]
@@ -207,7 +200,7 @@ plt.legend(fontsize=12, loc="upper left", bbox_to_anchor=(1, 1), frameon=False)
 plt.tight_layout()
 
 # Save Plot 1 as JPG, setting DPI=300 for high resolution
-out_dir = os.path.join(args.root_dir, "figures")
+out_dir = figure_dir
 os.makedirs(out_dir, exist_ok=True)
 plot1_filename = os.path.join(out_dir, "model_comparison.jpg")
 plt.savefig(plot1_filename, format="jpg", dpi=120)
@@ -328,7 +321,7 @@ else:
 # Plot 3 & 4: Hyperparameter Configuration Mean and Variance
 # =============================================================================
 
-exp_dir = os.path.join(args.root_dir, "experiment")
+exp_dir = experiment_dir
 
 config_pattern = re.compile(r"\[\d+/\d+\] Config:\s*(\{.*\})")
 loss_pattern = re.compile(r"-> (?:Best|Average) Val Loss:\s*([0-9.]+)")

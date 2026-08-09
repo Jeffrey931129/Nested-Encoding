@@ -1,3 +1,11 @@
+import os
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(current_dir)
+data_dir = os.path.join(root_dir, "data")
+experiment_dir = os.path.join(root_dir, "experiment")
+figure_dir = os.path.join(root_dir, "figures")
+
 def load_images(args, idx_val):
     """Load and preprocess the training, validation and test images.
 
@@ -34,7 +42,7 @@ def load_images(args, idx_val):
     )
 
     ### Load and preprocess the training and validation images ###
-    img_dirs = os.path.join(args.project_dir, "image_set", "training_images")
+    img_dirs = os.path.join(data_dir, "image_set", "training_images")
     image_list = []
     for root, dirs, files in os.walk(img_dirs):
         for file in files:
@@ -52,7 +60,7 @@ def load_images(args, idx_val):
             X_train.append(img)
 
     ### Load and preprocess the test images ###
-    img_dirs = os.path.join(args.project_dir, "image_set", "test_images")
+    img_dirs = os.path.join(data_dir, "image_set", "test_images")
     image_list = []
     for root, dirs, files in os.walk(img_dirs):
         for file in files:
@@ -99,12 +107,12 @@ def load_eeg_data(args, idx_val):
     import torch
 
     ### Load the EEG training data ###
-    data_dir = os.path.join(
+    eeg_data_dir = os.path.join(
         "eeg_dataset", "preprocessed_data", "sub-" + format(args.sub, "02")
     )
     training_file = "preprocessed_eeg_training.npy"
     data = np.load(
-        os.path.join(args.project_dir, data_dir, training_file), allow_pickle=True
+        os.path.join(data_dir, eeg_data_dir, training_file), allow_pickle=True
     ).item()
     y_train = data["preprocessed_eeg_data"]
     ch_names = data["ch_names"]
@@ -121,7 +129,7 @@ def load_eeg_data(args, idx_val):
     ### Load the EEG test data ###
     test_file = "preprocessed_eeg_test.npy"
     data = np.load(
-        os.path.join(args.project_dir, data_dir, test_file), allow_pickle=True
+        os.path.join(data_dir, eeg_data_dir, test_file), allow_pickle=True
     ).item()
     y_test = data["preprocessed_eeg_data"]
     # Average across repetitions

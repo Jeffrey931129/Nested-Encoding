@@ -20,9 +20,8 @@ from scipy.stats import ttest_1samp
 from statsmodels.stats.multitest import multipletests
 
 # Local utility imports
-from data_utils import load_images, load_eeg_data, create_dataloader
-from model import CustomModel
-from nested_sgd import NestedSGD
+from data_utils import load_images, load_eeg_data, create_dataloader, data_dir, experiment_dir
+from model import AlexEEGNet
 from nested_adam import NestedAdam
 
 # =============================================================================
@@ -32,25 +31,20 @@ class Args:
     def __init__(self):
         # Core modeling arguments
         self.sub = 1
-        self.dnn = "adam+nested"
-        self.epochs = 1
+        self.model = "AlexEEGNet"
+        self.optim = "NestedAdam"
+        self.epochs = 200
         self.patience = 30
         self.lr = 1e-5
         self.weight_decay = 0.0
-        self.momentum = 0.9
+        self.batch_size = 32
         
         # Nested optimizer specific arguments
         self.alpha = 0.5
         self.beta = (0.9, 0.999, 0.9)  # Natively defined as a tuple
         self.freq = (1, 8, 16)
         self.chunk_size = (8, 8, 8)
-        self.batch_size = 32
-        
-        # I/O arguments
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        root_dir = os.path.dirname(current_dir)
-        self.project_dir = os.path.join(root_dir, "data")
-        
+
         # Combined analysis arguments
         self.corr_n_iter = 1000
 
@@ -86,7 +80,7 @@ def main():
         idx_val[i * img_per_concept : i * img_per_concept + img_per_concept] = True
 
     print("\n", "=" * 10, "Load Image", "=" * 10)
-    cache_dir = os.path.join(args.project_dir, "cache")
+    cache_dir = os.path.join(data_dir, "cache")
     os.makedirs(cache_dir, exist_ok=True)
     img_cache_path = os.path.join(cache_dir, "image_data_cache.pt")
 
@@ -106,7 +100,7 @@ def main():
         }, img_cache_path)
 
     print("\n", "=" * 10, "Load EEG Data", "=" * 10)
-    cache_dir = os.path.join(args.project_dir, "cache")
+    cache_dir = os.path.join(data_dir, "cache")
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, f"sub-{args.sub:02d}_eeg_data_avg.pt")
 
@@ -132,45 +126,36 @@ def main():
     # =============================================================================
     # 3. Model Initialization
     # =============================================================================
-    num_models = 1
     eeg_channels = y_test.shape[1]
     eeg_time_points = y_test.shape[2]
-    # print(f"EEG Channel: {eeg_channels}, EEG Time Point: {eeg_time_points}")
-    out_features = y_test.shape[1] * y_test.shape[2]
-    synthetic_data = np.zeros((y_test.shape))
-    best_epochs = np.zeros((num_models))
 
     train_dl, val_dl, test_dl = create_dataloader(
         args, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
     )
 
-    model = CustomModel(num_channels=eeg_channels, time_points=eeg_time_points, hidden_dim=512, num_layers=1)
-    # print(model)
-    model.to(device)
+    if args.model == "AlexEEGNet":
+        model = AlexEEGNet(num_channels=eeg_channels, time_points=eeg_time_points)
+        model.to(device)
 
-    param_fast = [
-        {"params": model.features.parameters(), "lr": args.lr * 0.1},
-        {"params": model.feature_projection[1].parameters(), "lr": args.lr},
-        {"params": model.lstm_layers.parameters(), "lr": args.lr},
-        {"params": model.channel_decoder.parameters(), "lr": args.lr},
-    ]
-    param_mid = [
-        {"params": model.feature_projection[4].parameters(), "lr": args.lr},
-    ]
-    param_slow = [
-        {"params": model.feature_projection[6].parameters(), "lr": args.lr},
-    ]
+        param_fast = [
+            {"params": model.features.parameters(), "lr": args.lr * 0.1},
+            {"params": model.classifier[1].parameters(), "lr": args.lr},
+            {"params": model.lstm.parameters(), "lr": args.lr},
+            {"params": model.channel_decoder.parameters(), "lr": args.lr},
+        ]
+        param_mid = [
+            {"params": model.classifier[4].parameters(), "lr": args.lr},
+        ]
+        param_slow = [
+            {"params": model.classifier[6].parameters(), "lr": args.lr},
+        ]
 
-    params_list = [param_fast, param_mid, param_slow]
+        params_list = [param_fast, param_mid, param_slow]
 
-    if args.dnn == "gradient":
-        opts = [torch.optim.SGD(param_fast, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum)]
-    elif args.dnn == "gradient+nested":
-        opts = [NestedSGD(p, lr=args.lr, weight_decay=args.weight_decay, momentum=args.momentum, alpha=args.alpha, chunk_size=args.chunk_size[i]) for i, p in enumerate(params_list)]
-    elif args.dnn == "adam":
-        opts = [torch.optim.AdamW(param_fast, lr=args.lr, weight_decay=args.weight_decay)]
-    elif args.dnn == "adam+nested":
-        opts = [NestedAdam(p, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=args.chunk_size[i], freq=1) for i, p in enumerate(params_list)]
+        if args.optim == "AdamW":
+            opts = [torch.optim.AdamW(p, lr=args.lr, weight_decay=args.weight_decay) for p in params_list]
+        elif args.optim == "NestedAdam":
+            opts = [NestedAdam(p, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=args.chunk_size[i]) for i, p in enumerate(params_list)]
 
     loss_fn = torch.nn.MSELoss().to(device)
     torch.backends.cudnn.benchmark = True
@@ -180,13 +165,14 @@ def main():
     # =============================================================================
     print("\n", "=" * 10, "Training Model", "=" * 10)
     start_time = time.time()
+    best_model = None
     best_val_loss = float("inf")
     epochs_no_improve = 0
-    best_model = None
+    freq = args.freq if args.optim == "NestedAdam" else (1,) * len(args.freq)
+    X_buffer, y_buffer = [None] * freq[-1], [None] * freq[-1]
 
     # Progress bar for Epochs within this specific combination
     pbar = tqdm(range(args.epochs), unit="epoch", leave=False)
-    X_buffer, y_buffer = [None] * args.freq[-1], [None] * args.freq[-1]
 
     for epoch in pbar:
         # --- Training ---
@@ -194,36 +180,32 @@ def main():
         global_step_offset = epoch * len(train_dl)
         for batch_idx, (X, y) in enumerate(train_dl):
             current_step = global_step_offset + batch_idx + 1
-            data_idx = current_step % args.freq[-1]
+            data_idx = current_step % freq[-1]
             X_buffer[data_idx], y_buffer[data_idx] = X.to(device), y.to(device)
 
-            should_update = [current_step % f == 0 for f in args.freq]
-            update_idx = None
-            for i in range(len(should_update)-1, -1, -1):
-                if should_update[i]:
-                    update_idx = i 
-                    break
-            if update_idx != None:
-                while update_idx != None:
-                    next_update_idx = None
-                    for i in range(update_idx-1, -1, -1):
-                        if should_update[i]:
-                            next_update_idx = i
-                            break
-                    end = args.freq[next_update_idx] if next_update_idx != None else 0
-                    X = torch.cat([X_buffer[i%args.freq[-1]] for i in range(data_idx-args.freq[update_idx]+1, data_idx-end+1)], dim=0)
-                    y = torch.cat([y_buffer[i%args.freq[-1]] for i in range(data_idx-args.freq[update_idx]+1, data_idx-end+1)], dim=0)
+            update_indices = [i for i, f in enumerate(freq) if current_step % f == 0]
+            
+            if update_indices:
+                for idx in range(len(update_indices) - 1, -1, -1):
+                    curr_i = update_indices[idx]
+                    next_i = update_indices[idx - 1] if idx > 0 else None
+                    end = freq[next_i] if next_i is not None else 0
+                    
+                    indices = [i % freq[-1] for i in range(data_idx - freq[curr_i] + 1, data_idx - end + 1)]
+                    X = torch.cat([X_buffer[i] for i in indices], dim=0)
+                    y = torch.cat([y_buffer[i] for i in indices], dim=0)
+                    
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         pred = model(X).squeeze()
                         loss = loss_fn(pred, y)
+                    
                     loss.backward()
-                    for i in range(update_idx-1, -1, -1):
+                    
+                    for i in range(curr_i):
                         opts[i].zero_grad()
-                    update_idx = next_update_idx
 
-                for i in range(len(opts)):
-                    if current_step % args.freq[i] == 0:
-                        opts[i].step()
+                for i in update_indices:
+                    opts[i].step()
 
                 for opt in opts:
                     opt.zero_grad()
@@ -248,7 +230,7 @@ def main():
         # Early Stopping Logic
         if val_loss < best_val_loss:
             best_model = deepcopy(model)
-            best_epochs[0] = epoch + 1
+            best_epochs = epoch + 1
             best_val_loss = val_loss
             epochs_no_improve = 0
         else:
@@ -258,7 +240,7 @@ def main():
             print(f"\nEarly stopping at epoch {epoch + 1}")
             break
             
-    print(f"Best Epochs: {best_epochs[0]}, Best Loss: {best_val_loss:.4f}")
+    print(f"Best Epochs: {best_epochs}, Best Loss: {best_val_loss:.4f}")
     print(f"Training Time: {time.time() - start_time:.2f} seconds")
     del model
     if device == "cuda":
@@ -272,8 +254,9 @@ def main():
     best_model.to(device)
     best_model.eval()
     
-    ptr = 0
     test_loss = 0.0
+    synthetic_data = np.zeros((y_test.shape))
+    ptr = 0
     with torch.no_grad():
         for X, y in test_dl:
             X, y = X.to(device), y.to(device)
@@ -328,7 +311,7 @@ def main():
         correlation[layer] = corr_matrix
 
     # 5.2 Split-Half Reliability for Noise Ceiling
-    nc_cache_dir = os.path.join(args.project_dir, "cache")
+    nc_cache_dir = os.path.join(data_dir, "cache")
     nc_cache_path = os.path.join(nc_cache_dir, f"sub-{args.sub:02d}_noise_ceiling_{args.corr_n_iter}.npy")
 
     if os.path.exists(nc_cache_path):
@@ -340,7 +323,7 @@ def main():
         # Load raw biological EEG test data ONLY when cache doesn't exist
         print("Loading raw test data for noise ceiling estimation...")
         bio_data_dir = os.path.join("eeg_dataset", "preprocessed_data", f"sub-{args.sub:02d}", "preprocessed_eeg_test.npy")
-        bio_data = np.load(os.path.join(args.project_dir, bio_data_dir), allow_pickle=True).item()
+        bio_data = np.load(os.path.join(data_dir, bio_data_dir), allow_pickle=True).item()
         bio_test = bio_data["preprocessed_eeg_data"]
         del bio_data
 
@@ -425,7 +408,7 @@ def main():
         "test_loss": test_loss,
     }
 
-    stats_save_dir = os.path.join("experiment", "tmp")
+    stats_save_dir = os.path.join(experiment_dir, "tmp")
     os.makedirs(stats_save_dir, exist_ok=True)
     save_path = os.path.join(stats_save_dir, ".npy")
     np.save(save_path, stats_dict)
