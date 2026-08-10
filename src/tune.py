@@ -2,7 +2,9 @@
 Hyperparameter Tuning Script.
 
 This script performs a grid search over hyperparameter combinations using 
-a train/validation split for the model (e.g., AlexEEGNet) with the specified optimizer (e.g., NestedAdam, AdamW).
+a train/validation split for the specified model (e.g., AlexEEGNet) and 
+optimizer (e.g., NestedAdam, AdamW). It evaluates each configuration 
+and logs the best-performing hyperparameters based on validation loss.
 """
 
 import os
@@ -25,7 +27,6 @@ from nested_adam import NestedAdam
 # =============================================================================
 class Args:
     def __init__(self):
-        # Core defaults
         self.sub = 1
         self.model = "AlexEEGNet"
         self.optim = "NestedAdam"
@@ -45,9 +46,9 @@ class Args:
 def main():
     args = Args()
 
-    print(f">>> Hyperparameter Tuning ({args.optim} + {args.model}) <<<")
+    print(f">>> Hyperparameter Tuning ({args.model} + {args.optim}) <<<")
     # =============================================================================
-    # 1. Setup Environment & Random Seeds
+    # 1. Setup Environment and Random Seeds
     # =============================================================================
     seed = 20200220
     torch.manual_seed(seed)
@@ -59,7 +60,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # =============================================================================
-    # 2. Initialize Log File
+    # 2. Initialize Logging
     # =============================================================================
     current_time = datetime.now()
     formatted_time = current_time.strftime("%Y_%m_%d_%H_%M_%S")
@@ -125,16 +126,8 @@ def main():
             "times": times
         }, cache_path)
 
-    eeg_channels = y_test.shape[1]
-    eeg_time_points = y_test.shape[2]
-
     # =============================================================================
-    # 4. Define Grid
-    # =============================================================================
-    grid = list(ParameterGrid(args.hyperparameter_space))
-
-    # =============================================================================
-    # 5. Search Loop
+    # 4. Hyperparameter Search Loop
     # =============================================================================
     with open(log_file, "w") as f, open(detail_log_file, "w") as fd:
         f.write(f">> {args.model} + {args.optim} <<\n")
@@ -143,6 +136,9 @@ def main():
         fd.write(f">> {args.model} + {args.optim} <<\n")
         fd.write("-" * 50 + "\n")
 
+        eeg_channels = y_test.shape[1]
+        eeg_time_points = y_test.shape[2]
+        grid = list(ParameterGrid(args.hyperparameter_space))
         best_overall_loss = float("inf")
         best_overall_config = None
 
@@ -160,10 +156,17 @@ def main():
                 args, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
             )
 
-            # Run Training (Inlined)
+            # Initialize Training Configuration
             patience = args.patience
-            combo_id = idx + 1
-            
+            freq = config.get("freq", (1, 8, 16))
+            if args.optim != "NestedAdam":
+                freq = (1,) * len(freq)
+            chunk_size = config.get("chunk_size", (8, 8, 8))
+            alpha = config.get("alpha", 0.5)
+            beta = config.get("beta", (0.9, 0.999, 0.9))
+            lr = config.get("lr", 1e-5)
+            weight_decay = config.get("weight_decay", 0.0)
+
             model = AlexEEGNet(num_channels=eeg_channels, time_points=eeg_time_points)
             model.to(device)
 
@@ -183,15 +186,6 @@ def main():
 
             params_list = [param_fast, param_mid, param_slow]
 
-            freq = config.get("freq", (1, 8, 16))
-            if args.optim != "NestedAdam":
-                freq = (1,) * len(freq)
-            chunk_size = config.get("chunk_size", (8, 8, 8))
-            alpha = config.get("alpha", 0.5)
-            beta = config.get("beta", (0.9, 0.999, 0.9))
-            lr = config.get("lr", 1e-5)
-            weight_decay = config.get("weight_decay", 0.0)
-
             if args.optim == "AdamW":
                 opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay, betas=beta) for p in params_list]
             elif args.optim == "NestedAdam":
@@ -207,18 +201,16 @@ def main():
 
             best_val_loss = float("inf")
             epochs_no_improve = 0
+            X_buffer, y_buffer = [None] * freq[-1], [None] * freq[-1]
 
             # Progress bar for Epochs within this specific combination
-            pbar = tqdm(range(args.epochs), desc=f"Combo {combo_id}", unit="epoch", leave=False)
+            pbar = tqdm(range(args.epochs), desc=f"Combo {idx+1}", unit="epoch", leave=False)
 
             for epoch in pbar:
                 # --- Training ---
                 model.train()
                 train_loss = 0.0
                 global_step_offset = epoch * len(train_dl)
-                
-                # Buffer setup matching train.py
-                X_buffer, y_buffer = [None] * freq[-1], [None] * freq[-1]
                 
                 for batch_idx, (X, y) in enumerate(train_dl):
                     current_step = global_step_offset + batch_idx + 1
@@ -297,11 +289,10 @@ def main():
                 torch.cuda.empty_cache()
 
             best_val = best_val_loss
-            epochs_run = epoch + 1
             
-            print(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})")
-            f.write(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
-            fd.write(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epochs_run})\n")
+            print(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epoch+1})")
+            f.write(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epoch+1})\n")
+            fd.write(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epoch+1})\n")
 
             if best_val_loss < best_overall_loss:
                 best_overall_loss = best_val_loss
@@ -315,7 +306,7 @@ def main():
             fd.flush()
 
         # =============================================================================
-        # 6. Final Statistics Summary
+        # 5. Final Statistics Summary
         # =============================================================================
         summary_str = "=" * 50 + "\n"
         summary_str += "Optimization Completed\n"
@@ -328,7 +319,6 @@ def main():
         print(summary_str)
         f.write(summary_str)
         fd.write(summary_str)
-
 
 if __name__ == "__main__":
     main()
