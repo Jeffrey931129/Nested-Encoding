@@ -6,15 +6,22 @@ data_dir = os.path.join(root_dir, "data")
 experiment_dir = os.path.join(root_dir, "experiment")
 figure_dir = os.path.join(root_dir, "figures")
 
-def load_images(args, idx_val):
-    """Load and preprocess the training, validation and test images.
+def get_idx_val():
+    """Calculate and return the indices for validation data."""
+    import numpy as np
+    from sklearn.utils import resample
+    
+    train_img_concepts = np.arange(1654)
+    img_per_concept = 10
+    val_concepts = np.sort(resample(train_img_concepts, replace=False, n_samples=100, random_state=20200220))
+    idx_val = np.zeros((len(train_img_concepts) * img_per_concept), dtype=bool)
+    for i in val_concepts:
+        idx_val[i * img_per_concept : i * img_per_concept + img_per_concept] = True
+    return idx_val
 
-    Parameters
-    ----------
-    args : Namespace
-            Input arguments.
-    idx_val : bool
-            Indices of the validation images.
+
+def load_images():
+    """Load and preprocess the training, validation and test images.
 
     Returns
     -------
@@ -31,6 +38,8 @@ def load_images(args, idx_val):
     from torchvision import transforms
     from tqdm import tqdm
     from PIL import Image
+
+    idx_val = get_idx_val()
 
     ### Define the image preprocesing ###
     preprocess = transforms.Compose(
@@ -77,15 +86,13 @@ def load_images(args, idx_val):
     return X_train, X_val, X_test
 
 
-def load_eeg_data(args, idx_val):
+def load_eeg_data(sub):
     """Load the EEG training and test data.
 
     Parameters
     ----------
-    args : Namespace
-            Input arguments.
-    idx_val : bool
-            Indices of the validation images.
+    sub : int
+            Subject ID.
 
     Returns
     -------
@@ -106,9 +113,11 @@ def load_eeg_data(args, idx_val):
     import numpy as np
     import torch
 
+    idx_val = get_idx_val()
+
     ### Load the EEG training data ###
     eeg_data_dir = os.path.join(
-        "eeg_dataset", "preprocessed_data", "sub-" + format(args.sub, "02")
+        "eeg_dataset", "preprocessed_data", "sub-" + format(sub, "02")
     )
     training_file = "preprocessed_eeg_training.npy"
     data = np.load(
@@ -142,15 +151,15 @@ def load_eeg_data(args, idx_val):
 
 
 def create_dataloader(
-    args, time_point, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
+    batch_size, time_point, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
 ):
     """Put the training, validation and test data into a PyTorch-compatible
     Dataloader format.
 
     Parameters
     ----------
-    args : Namespace
-            Input arguments.
+    batch_size : int
+            Batch size for DataLoader.
     time_point : int
             Modeled EEG time point.
     g_cpu : torch.Generator
@@ -212,10 +221,8 @@ def create_dataloader(
     test_ds = EegDataset(X_test, y_test, time_point)
 
     ### Convert the Datasets to PyTorch's Dataloader format ###
-    train_dl = DataLoader(
-        train_ds, batch_size=args.batch_size, shuffle=True, generator=g_cpu
-    )
-    val_dl = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, generator=g_cpu)
+    val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
     test_dl = DataLoader(test_ds, batch_size=test_ds.__len__(), shuffle=False)
 
     ### Output ###

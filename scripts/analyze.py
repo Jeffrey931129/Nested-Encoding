@@ -60,41 +60,44 @@ def analyze_hyperparam_log(log_path: str):
     print(f"Expected Val Loss (Mean)    : {overall_mean:.6f}")
     print(f"Dispersion (Variance)       : {overall_variance:.6e}\n")
 
-    # Perform marginal statistical analysis on critical hyperparameter subsets
-    # This isolates the effect of individual hyperparameters (e.g., learning rate)
-    # by computing conditional expectation and conditional variance.
+    # Generate all combinations of hyperparameters (size 1 to N) to find the best subsets
     critical_params = [col for col in df.columns if col != "best_val_loss"]
-
-    for param in critical_params:
-        if param in df.columns:
-            print(f"=== Marginal Analysis conditional on '{param}' ===")
-            # Aggregate metrics to evaluate hyperparameter sensitivity and robustness
-            stats_df = (
-                df.groupby(param)["best_val_loss"]
-                .agg(
-                    Conditional_Mean="mean",
-                    Conditional_Variance="var",
-                    Sample_Size="count",
-                )
-                .reset_index()
-            )
-            print(
-                stats_df.to_string(
-                    index=False,
-                    justify="right",
-                    col_space={
-                        param: 20,
-                        "Conditional_Mean": 30,
-                        "Conditional_Variance": 30,
-                        "Sample_Size": 20,
-                    },
-                    formatters={
-                        "Conditional_Mean": "{:.6f}".format,
-                        "Conditional_Variance": "{:.6e}".format,
-                    },
-                )
-            )
-            print("\n")
+    
+    import itertools
+    all_results = []
+    
+    # To prevent exponential explosion if there are too many hyperparameters
+    max_k = min(len(critical_params), 8) 
+    
+    for k in range(1, max_k + 1):
+        for subset in itertools.combinations(critical_params, k):
+            subset = list(subset)
+            grouped = df.groupby(subset)["best_val_loss"].agg(
+                Mean="mean",
+                Std="std",
+                Count="count"
+            ).reset_index()
+            
+            for _, row in grouped.iterrows():
+                config_str = ", ".join([f"{p}={row[p]}" for p in subset])
+                all_results.append({
+                    "Num_Params": k,
+                    "Config": config_str,
+                    "Mean": row["Mean"],
+                    "Std": row["Std"],
+                    "Count": row["Count"]
+                })
+                
+    res_df = pd.DataFrame(all_results)
+    
+    import math
+    print("\n=== Top 10 Hyperparameter Combinations by Mean Loss ===")
+    top_mean = res_df.sort_values(by="Mean", ascending=True).head(10)
+    for i, row in enumerate(top_mean.itertuples(), 1):
+        # If count is 1, std is NaN, so we display 'inf' as requested
+        std_str = "inf" if row.Count == 1 else f"{row.Std:.6e}"
+        print(f"Rank {i:2d} | Mean Loss: {row.Mean:.6f} | Std Dev: {std_str:>12} | Count: {int(row.Count):2d}")
+        print(f"        | Config: {row.Config}\n")
 
     return df
 

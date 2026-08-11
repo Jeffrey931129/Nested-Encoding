@@ -72,13 +72,6 @@ def main():
     # =============================================================================
     # 2. Load the images (X) and the EEG data (y)
     # =============================================================================
-    train_img_concepts = np.arange(1654)
-    img_per_concept = 10
-    val_concepts = np.sort(resample(train_img_concepts, replace=False, n_samples=100))
-    idx_val = np.zeros((len(train_img_concepts) * img_per_concept), dtype=bool)
-    for i in val_concepts:
-        idx_val[i * img_per_concept : i * img_per_concept + img_per_concept] = True
-
     print("\n", "=" * 10, "Load Image", "=" * 10)
     cache_dir = os.path.join(data_dir, "cache")
     os.makedirs(cache_dir, exist_ok=True)
@@ -91,7 +84,7 @@ def main():
         X_val = img_cache_data["X_val"]
         X_test = img_cache_data["X_test"]
     else:
-        X_train, X_val, X_test = load_images(args, idx_val)
+        X_train, X_val, X_test = load_images()
         print(f"Saving image data to {img_cache_path}...")
         torch.save({
             "X_train": X_train,
@@ -113,7 +106,7 @@ def main():
         ch_names = cache_data["ch_names"]
         times = cache_data["times"]
     else:
-        y_train, y_val, y_test, ch_names, times = load_eeg_data(args, idx_val)
+        y_train, y_val, y_test, ch_names, times = load_eeg_data(args.sub)
         print(f"Saving averaged EEG data to {cache_path}...")
         torch.save({
             "y_train": y_train,
@@ -130,7 +123,7 @@ def main():
     eeg_time_points = y_test.shape[2]
 
     train_dl, val_dl, test_dl = create_dataloader(
-        args, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
+        args.batch_size, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
     )
 
     if args.model == "AlexEEGNet":
@@ -155,9 +148,9 @@ def main():
         if args.optim == "AdamW":
             opts = [torch.optim.AdamW(p, lr=args.lr, weight_decay=args.weight_decay) for p in params_list]
         elif args.optim == "NestedAdam":
-            opts = [NestedAdam(p, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, chunk_size=args.chunk_size[i]) for i, p in enumerate(params_list)]
+            opts = [NestedAdam(p, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, freq=args.freq[i], chunk_size=args.chunk_size[i]) for i, p in enumerate(params_list)]
 
-    loss_fn = torch.nn.MSELoss().to(device)
+    loss_fn = torch.nn.MSELoss(reduction='sum').to(device)
     torch.backends.cudnn.benchmark = True
 
     # =============================================================================
@@ -198,7 +191,7 @@ def main():
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         pred = model(X).squeeze()
                         loss = loss_fn(pred, y)
-                    
+                    loss = loss / args.batch_size / eeg_channels / eeg_time_points
                     loss.backward()
                     
                     for i in range(curr_i):
@@ -219,8 +212,8 @@ def main():
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     pred = model(X).squeeze()
                     v_loss = loss_fn(pred, y)
-                val_loss += v_loss.item() * X.size(0)
-        val_loss /= len(val_dl.dataset)
+                val_loss += v_loss.item()
+        val_loss /= (len(val_dl.dataset) * eeg_channels * eeg_time_points)
 
         # Update progress bar info
         pbar.set_postfix(
@@ -266,14 +259,14 @@ def main():
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 pred = best_model(X)
                 t_loss = loss_fn(pred.squeeze(), y)
-            test_loss += t_loss.item() * batch_size
+            test_loss += t_loss.item()
             
             # Store predictions directly reshaped to avoid unnecessary flat arrays
             preds = pred.detach().float().cpu().numpy().reshape(batch_size, eeg_channels, eeg_time_points)
             synthetic_data[ptr:ptr+batch_size] = preds
             ptr += batch_size
             
-    test_loss /= len(test_dl.dataset)
+    test_loss /= (len(test_dl.dataset) * eeg_channels * eeg_time_points)
     print(f"Test Loss: {test_loss:.4f}")
 
     synthetic_data_dict = {"all_time_points": synthetic_data}

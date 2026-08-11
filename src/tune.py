@@ -7,6 +7,7 @@ optimizer (e.g., NestedAdam, AdamW). It evaluates each configuration
 and logs the best-performing hyperparameters based on validation loss.
 """
 
+from copy import deepcopy
 import os
 import numpy as np
 import random
@@ -30,17 +31,26 @@ class Args:
         self.sub = 1
         self.model = "AlexEEGNet"
         self.optim = "NestedAdam"
-        self.epochs = 200
+        self.epochs = 2
         self.patience = 15
 
+        # self.hyperparameter_space = {
+        #     "lr": [5e-6, 1e-5, 5e-5],
+        #     "batch_size": [16, 32],
+        #     "alpha": [0.0],
+        #     "beta": [(0.85, 0.999, 0.9), (0.9, 0.999, 0.9), (0.95, 0.999, 0.9)],
+        #     "chunk_size": [(1, 1, 1)],
+        #     "freq": [(1, 1, 1)],
+        #     "weight_decay": [0.0, 1e-4, 1e-2],
+        # }
         self.hyperparameter_space = {
             "lr": [5e-6, 1e-5, 5e-5],
-            "batch_size": [16, 32],
+            "batch_size": [16],
             "alpha": [0.0],
             "beta": [(0.85, 0.999, 0.9), (0.9, 0.999, 0.9), (0.95, 0.999, 0.9)],
             "chunk_size": [(1, 1, 1)],
             "freq": [(1, 1, 1)],
-            "weight_decay": [0.0, 1e-4, 1e-2],
+            "weight_decay": [0.0],
         }
 
 def main():
@@ -75,13 +85,6 @@ def main():
     # =============================================================================
     # 3. Load the images (X) and the EEG data (y)
     # =============================================================================
-    train_img_concepts = np.arange(1654)
-    img_per_concept = 10
-    val_concepts = np.sort(resample(train_img_concepts, replace=False, n_samples=100))
-    idx_val = np.zeros((len(train_img_concepts) * img_per_concept), dtype=bool)
-    for i in val_concepts:
-        idx_val[i * img_per_concept : i * img_per_concept + img_per_concept] = True
-
     print("\n", "=" * 10, "Load Image", "=" * 10)
     cache_dir = os.path.join(data_dir, "cache")
     os.makedirs(cache_dir, exist_ok=True)
@@ -94,7 +97,7 @@ def main():
         X_val = img_cache_data["X_val"]
         X_test = img_cache_data["X_test"]
     else:
-        X_train, X_val, X_test = load_images(args, idx_val)
+        X_train, X_val, X_test = load_images()
         print(f"Saving image data to {img_cache_path}...")
         torch.save({
             "X_train": X_train,
@@ -116,7 +119,7 @@ def main():
         ch_names = cache_data["ch_names"]
         times = cache_data["times"]
     else:
-        y_train, y_val, y_test, ch_names, times = load_eeg_data(args, idx_val)
+        y_train, y_val, y_test, ch_names, times = load_eeg_data(args.sub)
         print(f"Saving averaged EEG data to {cache_path}...")
         torch.save({
             "y_train": y_train,
@@ -151,9 +154,9 @@ def main():
             fd.flush()
 
             # Create DataLoaders for this batch_size
-            args.batch_size = config["batch_size"]
-            train_dl, val_dl, _ = create_dataloader(
-                args, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
+            batch_size = config["batch_size"]
+            train_dl, val_dl, test_dl = create_dataloader(
+                batch_size, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
             )
 
             # Initialize Training Configuration
@@ -190,15 +193,16 @@ def main():
                 opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay, betas=beta) for p in params_list]
             elif args.optim == "NestedAdam":
                 opts = [
-                    NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, chunk_size=chunk_size[i]) 
+                    NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, freq=freq[i], chunk_size=chunk_size[i]) 
                     for i, p in enumerate(params_list)
                 ]
             else:
                 raise ValueError(f"Unsupported optimizer: {args.optim}")
 
-            loss_fn = nn.MSELoss().to(device)
+            loss_fn = nn.MSELoss(reduction='sum').to(device)
             torch.backends.cudnn.benchmark = True
 
+            best_model = None
             best_val_loss = float("inf")
             epochs_no_improve = 0
             X_buffer, y_buffer = [None] * freq[-1], [None] * freq[-1]
@@ -233,6 +237,7 @@ def main():
                                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                                     pred = model(X).squeeze()
                                     loss = loss_fn(pred, y)
+                                loss = loss / args.batch_size / eeg_channels / eeg_time_points
                                 loss.backward()
                                 
                                 for i in range(curr_i):
@@ -249,8 +254,8 @@ def main():
                         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                             pred = model(X).squeeze()
                             loss = loss_fn(pred, y)
-                        train_loss += loss.item() * X.size(0)
-                train_loss /= len(train_dl.dataset)
+                        train_loss += loss.item()
+                train_loss /= (len(train_dl.dataset) * eeg_channels * eeg_time_points)
 
                 # --- Validation ---
                 model.eval()
@@ -261,8 +266,8 @@ def main():
                         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                             pred = model(X).squeeze()
                             v_loss = loss_fn(pred, y)
-                        val_loss += v_loss.item() * X.size(0)
-                val_loss /= len(val_dl.dataset)
+                        val_loss += v_loss.item()
+                val_loss /= (len(val_dl.dataset) * eeg_channels * eeg_time_points)
 
                 # Update progress bar info
                 pbar.set_postfix(
@@ -276,6 +281,7 @@ def main():
 
                 # Early Stopping Logic
                 if val_loss < best_val_loss:
+                    best_model = deepcopy(model)
                     best_val_loss = val_loss
                     epochs_no_improve = 0
                 else:
@@ -284,18 +290,30 @@ def main():
                 if epochs_no_improve >= patience:
                     break
 
+            # Evaluate on Test Set using Best Model
+            best_model.to(device)
+            best_model.eval()
+            test_loss = 0.0
+            with torch.no_grad():
+                for X, y in test_dl:
+                    X, y = X.to(device), y.to(device)
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        pred = best_model(X).squeeze()
+                        t_loss = loss_fn(pred, y)
+                    test_loss += t_loss.item()
+            test_loss /= (len(test_dl.dataset) * eeg_channels * eeg_time_points)
+
             del model
+            del best_model
             if device == "cuda":
                 torch.cuda.empty_cache()
 
-            best_val = best_val_loss
-            
-            print(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epoch+1})")
-            f.write(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epoch+1})\n")
-            fd.write(f"-> Best Val Loss: {best_val:.4f} (Stopped at Epoch {epoch+1})\n")
+            print(f"-> Best Val Loss: {best_val_loss:.4f} | Test Loss: {test_loss:.4f} (Stopped at Epoch {epoch+1})")
+            f.write(f"-> Best Val Loss: {best_val_loss:.4f} | Test Loss: {test_loss:.4f} (Stopped at Epoch {epoch+1})\n")
+            fd.write(f"-> Best Val Loss: {best_val_loss:.4f} | Test Loss: {test_loss:.4f} (Stopped at Epoch {epoch+1})\n")
 
-            if best_val_loss < best_overall_loss:
-                best_overall_loss = best_val_loss
+            if test_loss < best_overall_loss:
+                best_overall_loss = test_loss
                 best_overall_config = config
                 f.write(">>> New Best Found! <<<\n")
                 fd.write(">>> New Best Found! <<<\n")
@@ -310,7 +328,7 @@ def main():
         # =============================================================================
         summary_str = "=" * 50 + "\n"
         summary_str += "Optimization Completed\n"
-        summary_str += f"Best Validation Loss: {best_overall_loss:.4f}\n"
+        summary_str += f"Best Test Loss: {best_overall_loss:.4f}\n"
         summary_str += "Optimal Hyperparameters:\n"
         for k, v in best_overall_config.items():
             summary_str += f"  - {k}: {v}\n"
