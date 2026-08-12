@@ -144,7 +144,7 @@ for i, item in enumerate(all_plottable_data):
     label = item["label"]
     
     if "test_loss" in data_dict:
-        label += f" | Loss: {data_dict['test_loss']:.4f}"
+        label += f" | Loss: {data_dict['test_loss']:.6f}"
 
     corr = data_dict["correlation"][key]
 

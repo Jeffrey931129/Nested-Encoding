@@ -271,11 +271,11 @@ def main():
 
                 # Update progress bar info
                 pbar.set_postfix(
-                    {"Val_Loss": f"{val_loss:.4f}", "Best": f"{best_val_loss:.4f}"}
+                    {"Val_Loss": f"{val_loss:.6f}", "Best": f"{best_val_loss:.6f}"}
                 )
 
                 fd.write(
-                    f"    Epoch {epoch + 1:03d} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}\n"
+                    f"    Epoch {epoch + 1:03d} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}\n"
                 )
                 fd.flush()
 
@@ -308,9 +308,9 @@ def main():
             if device == "cuda":
                 torch.cuda.empty_cache()
 
-            print(f"-> Best Val Loss: {best_val_loss:.4f} | Test Loss: {test_loss:.4f} (Stopped at Epoch {epoch+1})")
-            f.write(f"-> Best Val Loss: {best_val_loss:.4f} | Test Loss: {test_loss:.4f} (Stopped at Epoch {epoch+1})\n")
-            fd.write(f"-> Best Val Loss: {best_val_loss:.4f} | Test Loss: {test_loss:.4f} (Stopped at Epoch {epoch+1})\n")
+            print(f"-> Best Val Loss: {best_val_loss:.6f} | Test Loss: {test_loss:.6f} (Stopped at Epoch {epoch+1})")
+            f.write(f"-> Best Val Loss: {best_val_loss:.6f} | Test Loss: {test_loss:.6f} (Stopped at Epoch {epoch+1})\n")
+            fd.write(f"-> Best Val Loss: {best_val_loss:.6f} | Test Loss: {test_loss:.6f} (Stopped at Epoch {epoch+1})\n")
 
             if test_loss < best_overall_loss:
                 best_overall_loss = test_loss
@@ -328,7 +328,7 @@ def main():
         # =============================================================================
         summary_str = "=" * 50 + "\n"
         summary_str += "Optimization Completed\n"
-        summary_str += f"Best Test Loss: {best_overall_loss:.4f}\n"
+        summary_str += f"Best Test Loss: {best_overall_loss:.6f}\n"
         summary_str += "Optimal Hyperparameters:\n"
         for k, v in best_overall_config.items():
             summary_str += f"  - {k}: {v}\n"

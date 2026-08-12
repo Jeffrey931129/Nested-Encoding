@@ -217,7 +217,7 @@ def main():
 
         # Update progress bar info
         pbar.set_postfix(
-            {"Val_Loss": f"{val_loss:.4f}", "Best": f"{best_val_loss:.4f}"}
+            {"Val_Loss": f"{val_loss:.6f}", "Best": f"{best_val_loss:.6f}"}
         )
         
         # Early Stopping Logic
@@ -233,7 +233,7 @@ def main():
             print(f"\nEarly stopping at epoch {epoch + 1}")
             break
             
-    print(f"Best Epochs: {best_epochs}, Best Loss: {best_val_loss:.4f}")
+    print(f"Best Epochs: {best_epochs}, Best Loss: {best_val_loss:.6f}")
     print(f"Training Time: {time.time() - start_time:.2f} seconds")
     del model
     if device == "cuda":
@@ -267,7 +267,7 @@ def main():
             ptr += batch_size
             
     test_loss /= (len(test_dl.dataset) * eeg_channels * eeg_time_points)
-    print(f"Test Loss: {test_loss:.4f}")
+    print(f"Test Loss: {test_loss:.6f}")
 
     synthetic_data_dict = {"all_time_points": synthetic_data}
 
