@@ -31,26 +31,17 @@ class Args:
         self.sub = 1
         self.model = "AlexEEGNet"
         self.optim = "NestedAdam"
-        self.epochs = 2
+        self.epochs = 200
         self.patience = 15
 
-        # self.hyperparameter_space = {
-        #     "lr": [5e-6, 1e-5, 5e-5],
-        #     "batch_size": [16, 32],
-        #     "alpha": [0.0],
-        #     "beta": [(0.85, 0.999, 0.9), (0.9, 0.999, 0.9), (0.95, 0.999, 0.9)],
-        #     "chunk_size": [(1, 1, 1)],
-        #     "freq": [(1, 1, 1)],
-        #     "weight_decay": [0.0, 1e-4, 1e-2],
-        # }
         self.hyperparameter_space = {
-            "lr": [5e-6, 1e-5, 5e-5],
-            "batch_size": [16],
+            "lr": [1e-06, 3e-06, 5e-06, 1e-5],
+            "batch_size": [32],
             "alpha": [0.0],
-            "beta": [(0.85, 0.999, 0.9), (0.9, 0.999, 0.9), (0.95, 0.999, 0.9)],
+            "beta": [(0.9, 0.999, 0.9), (0.95, 0.999, 0.9), (0.99, 0.999, 0.9)],
             "chunk_size": [(1, 1, 1)],
             "freq": [(1, 1, 1)],
-            "weight_decay": [0.0],
+            "weight_decay": [0.0, 1e-2, 5e-2],
         }
 
 def main():
@@ -219,7 +210,7 @@ def main():
                 for batch_idx, (X, y) in enumerate(train_dl):
                     current_step = global_step_offset + batch_idx + 1
                     data_idx = current_step % freq[-1]
-                    X_buffer[data_idx], y_buffer[data_idx] = X.to(device), y.to(device)
+                    X_buffer[data_idx], y_buffer[data_idx] = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
 
                     update_indices = [i for i, f in enumerate(freq) if current_step % f == 0]
                     
@@ -237,7 +228,7 @@ def main():
                                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                                     pred = model(X).squeeze()
                                     loss = loss_fn(pred, y)
-                                loss = loss / args.batch_size / eeg_channels / eeg_time_points
+                                loss = loss / batch_size / eeg_channels / eeg_time_points
                                 loss.backward()
                                 
                                 for i in range(curr_i):
@@ -259,15 +250,13 @@ def main():
 
                 # --- Validation ---
                 model.eval()
-                val_loss = 0.0
                 with torch.no_grad():
-                    for X, y in val_dl:
-                        X, y = X.to(device), y.to(device)
-                        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                            pred = model(X).squeeze()
-                            v_loss = loss_fn(pred, y)
-                        val_loss += v_loss.item()
-                val_loss /= (len(val_dl.dataset) * eeg_channels * eeg_time_points)
+                    X, y = next(iter(val_dl))
+                    X, y = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        pred = model(X).squeeze()
+                        v_loss = loss_fn(pred, y)
+                    val_loss = v_loss.item() / (len(val_dl.dataset) * eeg_channels * eeg_time_points)
 
                 # Update progress bar info
                 pbar.set_postfix(
@@ -293,15 +282,13 @@ def main():
             # Evaluate on Test Set using Best Model
             best_model.to(device)
             best_model.eval()
-            test_loss = 0.0
             with torch.no_grad():
-                for X, y in test_dl:
-                    X, y = X.to(device), y.to(device)
-                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        pred = best_model(X).squeeze()
-                        t_loss = loss_fn(pred, y)
-                    test_loss += t_loss.item()
-            test_loss /= (len(test_dl.dataset) * eeg_channels * eeg_time_points)
+                X, y = next(iter(test_dl))
+                X, y = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    pred = best_model(X).squeeze()
+                    t_loss = loss_fn(pred, y)
+                test_loss = t_loss.item() / (len(test_dl.dataset) * eeg_channels * eeg_time_points)
 
             del model
             del best_model

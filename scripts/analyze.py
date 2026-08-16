@@ -7,8 +7,8 @@ def analyze_hyperparam_log(log_path: str):
     # Compile regular expressions for efficient pattern matching
     # Matches the configuration dictionary string
     config_pattern = re.compile(r"\[\d+/\d+\] Config:\s*(\{.*\})")
-    # Matches the validation loss float value
-    loss_pattern = re.compile(r"-> (?:Average|Best) Val Loss:\s*([0-9.]+)")
+    # Matches the test loss float value
+    loss_pattern = re.compile(r"Test Loss:\s*([0-9.]+)")
 
     results = []
     current_config = None
@@ -31,14 +31,14 @@ def analyze_hyperparam_log(log_path: str):
                     current_config = None
                 continue
 
-            # Attempt to extract the objective function value (Validation Loss)
+            # Attempt to extract the objective function value (Test Loss)
             loss_match = loss_pattern.search(line)
             if loss_match and current_config is not None:
-                val_loss = float(loss_match.group(1))
+                test_loss = float(loss_match.group(1))
 
                 # Construct an observation combining hyperparameters and their resultant loss
                 entry = current_config.copy()
-                entry["best_val_loss"] = val_loss
+                entry["test_loss"] = test_loss
                 results.append(entry)
 
                 # Reset the state to prevent misalignment of mismatched log entries
@@ -52,16 +52,20 @@ def analyze_hyperparam_log(log_path: str):
     df = pd.DataFrame(results)
 
     # Compute empirical mean and sample variance across the entire hyperparameter search space
-    overall_mean = df["best_val_loss"].mean()
-    overall_variance = df["best_val_loss"].var()
+    overall_mean = df["test_loss"].mean()
+    overall_variance = df["test_loss"].var()
 
     print("\n=== Global Loss Landscape Analysis ===")
     print(f"Total configurations parsed : {len(df)}")
-    print(f"Expected Val Loss (Mean)    : {overall_mean:.6f}")
+    print(f"Expected Test Loss (Mean)   : {overall_mean:.6f}")
     print(f"Dispersion (Variance)       : {overall_variance:.6e}\n")
 
     # Generate all combinations of hyperparameters (size 1 to N) to find the best subsets
-    critical_params = [col for col in df.columns if col != "best_val_loss"]
+    # Filter out parameters that have only 1 unique value (constants) to avoid redundant combinations
+    critical_params = [
+        col for col in df.columns 
+        if col != "test_loss" and df[col].astype(str).nunique() > 1
+    ]
     
     import itertools
     all_results = []
@@ -72,7 +76,7 @@ def analyze_hyperparam_log(log_path: str):
     for k in range(1, max_k + 1):
         for subset in itertools.combinations(critical_params, k):
             subset = list(subset)
-            grouped = df.groupby(subset)["best_val_loss"].agg(
+            grouped = df.groupby(subset)["test_loss"].agg(
                 Mean="mean",
                 Std="std",
                 Count="count"

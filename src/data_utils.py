@@ -11,9 +11,10 @@ def get_idx_val():
     import numpy as np
     from sklearn.utils import resample
     
+    seed = 20200220
     train_img_concepts = np.arange(1654)
     img_per_concept = 10
-    val_concepts = np.sort(resample(train_img_concepts, replace=False, n_samples=100, random_state=20200220))
+    val_concepts = np.sort(resample(train_img_concepts, replace=False, n_samples=100, random_state=seed))
     idx_val = np.zeros((len(train_img_concepts) * img_per_concept), dtype=bool)
     for i in val_concepts:
         idx_val[i * img_per_concept : i * img_per_concept + img_per_concept] = True
@@ -198,7 +199,7 @@ def create_dataloader(
             self, X, y, time, transform=None, target_transform=None
         ):
             self.time = time
-            self.X = X
+            self.X = torch.stack(X) if isinstance(X, list) else X
             self.y = torch.reshape(y, (y.shape[0], -1))
             self.transform = transform
             self.target_transform = target_transform
@@ -221,9 +222,9 @@ def create_dataloader(
     test_ds = EegDataset(X_test, y_test, time_point)
 
     ### Convert the Datasets to PyTorch's Dataloader format ###
-    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, generator=g_cpu)
-    val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
-    test_dl = DataLoader(test_ds, batch_size=test_ds.__len__(), shuffle=False)
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, generator=g_cpu, pin_memory=True)
+    val_dl = DataLoader(val_ds, batch_size=val_ds.__len__(), shuffle=False, pin_memory=True)
+    test_dl = DataLoader(test_ds, batch_size=test_ds.__len__(), shuffle=False, pin_memory=True)
 
     ### Output ###
     return train_dl, val_dl, test_dl

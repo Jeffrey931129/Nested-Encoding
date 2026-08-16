@@ -9,10 +9,10 @@ dependencies:
   - python=3.13.7
   - pip
 
-  # Deep Learning (PyTorch 2.9.0 + CUDA 13.0)
-  - pytorch=2.9.0
-  - torchvision=0.24.0
-  - pytorch-cuda=13.0
+  # Deep Learning (PyTorch + CUDA 12.4)
+  - pytorch
+  - torchvision
+  - pytorch-cuda=12.4
 
   # Core Scientific Computing
   - numpy=2.2.6

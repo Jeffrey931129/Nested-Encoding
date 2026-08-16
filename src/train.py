@@ -42,8 +42,8 @@ class Args:
         # Nested optimizer specific arguments
         self.alpha = 0.5
         self.beta = (0.9, 0.999, 0.9)  # Natively defined as a tuple
-        self.freq = (1, 8, 16)
-        self.chunk_size = (8, 8, 8)
+        self.freq = (1, 16, 32)
+        self.chunk_size = (16, 16, 16)
 
         # Combined analysis arguments
         self.corr_n_iter = 1000
@@ -174,7 +174,7 @@ def main():
         for batch_idx, (X, y) in enumerate(train_dl):
             current_step = global_step_offset + batch_idx + 1
             data_idx = current_step % freq[-1]
-            X_buffer[data_idx], y_buffer[data_idx] = X.to(device), y.to(device)
+            X_buffer[data_idx], y_buffer[data_idx] = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
 
             update_indices = [i for i, f in enumerate(freq) if current_step % f == 0]
             
@@ -205,15 +205,13 @@ def main():
 
         # --- Validation ---
         model.eval()
-        val_loss = 0.0
         with torch.no_grad():
-            for X, y in val_dl:
-                X, y = X.to(device), y.to(device)
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    pred = model(X).squeeze()
-                    v_loss = loss_fn(pred, y)
-                val_loss += v_loss.item()
-        val_loss /= (len(val_dl.dataset) * eeg_channels * eeg_time_points)
+            X, y = next(iter(val_dl))
+            X, y = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                pred = model(X).squeeze()
+                v_loss = loss_fn(pred, y)
+            val_loss = v_loss.item() / (len(val_dl.dataset) * eeg_channels * eeg_time_points)
 
         # Update progress bar info
         pbar.set_postfix(
@@ -247,26 +245,18 @@ def main():
     best_model.to(device)
     best_model.eval()
     
-    test_loss = 0.0
-    synthetic_data = np.zeros((y_test.shape))
-    ptr = 0
     with torch.no_grad():
-        for X, y in test_dl:
-            X, y = X.to(device), y.to(device)
-            batch_size = X.size(0)
-            
-            # Compute test loss and predictions (avoid duplicate model call)
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                pred = best_model(X)
-                t_loss = loss_fn(pred.squeeze(), y)
-            test_loss += t_loss.item()
-            
-            # Store predictions directly reshaped to avoid unnecessary flat arrays
-            preds = pred.detach().float().cpu().numpy().reshape(batch_size, eeg_channels, eeg_time_points)
-            synthetic_data[ptr:ptr+batch_size] = preds
-            ptr += batch_size
-            
-    test_loss /= (len(test_dl.dataset) * eeg_channels * eeg_time_points)
+        X, y = next(iter(test_dl))
+        X, y = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
+        
+        # Compute test loss and predictions (avoid duplicate model call)
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            pred = best_model(X)
+            t_loss = loss_fn(pred.squeeze(), y)
+        test_loss = t_loss.item() / (len(test_dl.dataset) * eeg_channels * eeg_time_points)
+        
+        # Store predictions directly reshaped to avoid unnecessary flat arrays
+        synthetic_data = pred.detach().float().cpu().numpy().reshape(len(test_dl.dataset), eeg_channels, eeg_time_points)
     print(f"Test Loss: {test_loss:.6f}")
 
     synthetic_data_dict = {"all_time_points": synthetic_data}
