@@ -1,68 +1,50 @@
-# Building and evaluating encoding models of EEG visual responses using DNNs
+# Nested Learning for Encoding Visual Responses
 
-Here we provide the code to reproduce the results of our data resource paper:</br>
-"[A large and rich EEG dataset for modeling human visual object recognition][paper_link]".</br>
-Alessandro T. Gifford, Kshitij Dwivedi, Gemma Roig, Radoslaw M. Cichy
+This repository primarily tests and evaluates a novel **Nested Learning** architecture for machine learning models. To measure the effectiveness of this architecture, we use the complex task of encoding EEG visual responses as our primary evaluation benchmark.
 
-If you experience problems with the code, please create a pull request or report the bug directly to Ale via email (alessandro.gifford@gmail.com).
+> **Note:** The nested learning architecture, core machine learning models, training logic, and evaluation pipelines in this repository are our original research contributions. The EEG dataset and data preprocessing methods used as the benchmark standard are adapted from prior work (see Acknowledgements).
 
-Please visit the [dataset page][dataset_page] for the data, paper, dataset tutorial and more.
+## Environment Setup
+To run the code, first install [Anaconda][conda], then create and activate a dedicated Conda environment by typing the following into your terminal:
 
-[Here][videos] you will find some useful videos on our EEG dataset.
-
-
-
-## Environment setup
-To run the code first install [Anaconda][conda], then create and activate a dedicated Conda environment by typing the following into your terminal:
-```shell
-curl -O https://raw.githubusercontent.com/gifale95/eeg_encoding_model/main/environment.yml
-conda env create -f environment.yml
-conda activate eeg_encoding
-```
-Alternatively, after installing Anaconda you can download the [environment.yml][env_file] file, open the terminal in the download directory and type:
 ```shell
 conda env create -f environment.yml
-conda activate eeg_encoding
+conda activate nested_encoding
 ```
 
+## Data Availability & Directory Structure
+For our EEG benchmark evaluation, the original dataset and image stimuli must be downloaded and placed into the appropriate directories. You can find the raw and preprocessed data on [OSF][osf] provided by the original authors.
 
-## Data availability
-The source, raw and preprocessed EEG dataset, the training and test images and the DNN feature maps are available on [OSF][osf]. The ILSVRC-2012 validation and test images can be found on [ImageNet][imagenet]. To run the code, the data must be downloaded and placed into the following directories:
+Please ensure your `./data/` folder follows this exact structure before running the models:
 
-* **Source EEG data:** `./data/eeg_dataset/source_data/`.
-* **Raw EEG data:** `./data/eeg_dataset/raw_data/`.
-* **Preprocessed EEG data:** `./data/eeg_dataset/preprocessed_data/`.
-* **Training and test images; ILSVRC-2012 validation and test images:** `./data/image_set/`.
-* **DNN feature maps:** `./data/dnn_feature_maps/pca_feature_maps`.
+```text
+data/
+├── eeg_dataset/
+│   └── preprocessed_data/    # Preprocessed EEG data ready for modeling
+│       ├── sub-01/           # Subject 1 preprocessed data
+│       ├── sub-02/           # Subject 2 preprocessed data
+│       └── ...               # Up to sub-10
+└── image_set/                # Image stimuli dataset
+    ├── training_images/      # Training image set
+    ├── test_images/          # Test image set
+    ├── image_metadata.npy    # Metadata for images
+    └── LICENSE.txt           # License for images
+```
 
+## Code Structure
+* **`src/`**: Contains the source code for our core **nested learning** architectures, models, hyperparameter tuning, and visualization.
+* **`scripts/`**: Contains utility scripts and tools for auxiliary tasks, such as analyzing hyperparameter tuning logs.
 
+## Acknowledgements and License
+The EEG dataset and the preprocessing methodologies used as the evaluation standard in this project are sourced from the following work:
+**"A large and rich EEG dataset for modeling human visual object recognition"** by Alessandro T. Gifford, Kshitij Dwivedi, Gemma Roig, Radoslaw M. Cichy.
 
-## Code description
-* **00_data_collection:** Matlab (Psychtoolbox) code used for data collection.
-* **01_data_preparation:** convert the source EEG data into raw EEG data, reformat the resting state data, and extract behavioral results.
-* **02_eeg_preprocessing:** preprocess the raw EEG data.
-* **03_dnn_feature_maps_extraction:** extract the feature maps of all images using four DNN architectures (AlexNet, ResNet-50, CORnet-S, MoCo), and downsample them using principal component analysis (PCA).
-* **src:** synthesize the EEG responses to images through linearizing and end-to-end encoding models, and plot the analyses results.
+The original data and preprocessing code are licensed under the **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)** license. For details, please see the [LICENSE.md](./LICENSE.md) file.
 
+### Citation
+If you use the benchmark dataset or preprocessing code in your own work, please ensure you cite the original paper:
+> Gifford AT, Dwivedi K, Roig G, Cichy RM. 2022. A large and rich EEG dataset for modeling human visual object recognition. _NeuroImage_, 264:119754. DOI: [https://doi.org/10.1016/j.neuroimage.2022.119754][paper_link]
 
-
-## Interactive dataset tutorial
-[Here][colab] you will find a Colab interactive tutorial on how to load and visualize the preprocessed EEG data and the corresponding stimuli images.
-
-[colab]: https://colab.research.google.com/drive/1i1IKeP4cK3ViscP4b4kNOVo4kRoL8tf6?usp=sharing
-
-
-
-## Cite
-If you use any of our data or code, partly or as it is, please cite our paper:
-
-Gifford AT, Dwivedi K, Roig G, Cichy RM. 2022. A large and rich EEG dataset for modeling human visual object recognition. _NeuroImage_, 264:119754. DOI: [https://doi.org/10.1016/j.neuroimage.2022.119754][paper_link]
-
-
-[dataset_page]: https://www.alegifford.com/projects/eeg_dataset/
-[videos]: https://www.youtube.com/playlist?list=PLAkLSNuCebPPv_S3gTjYIFvQ82hyezIld
-[paper_link]: https://doi.org/10.1016/j.neuroimage.2022.119754
 [conda]: https://www.anaconda.com/
-[env_file]: https://github.com/gifale95/eeg_encoding_model/blob/main/environment.yml
 [osf]: https://osf.io/3jk45/
-[imagenet]: https://www.image-net.org/download.php
+[paper_link]: https://doi.org/10.1016/j.neuroimage.2022.119754

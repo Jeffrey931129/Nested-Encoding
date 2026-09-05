@@ -1,4 +1,4 @@
-name: eeg_encoding
+name: nested_encoding
 channels:
   - pytorch
   - nvidia
