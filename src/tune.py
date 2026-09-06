@@ -1,31 +1,27 @@
 """
 Hyperparameter Tuning Script.
 
-This script performs a grid search over hyperparameter combinations using 
-a train/validation split for the specified model (e.g., AlexEEGNet) and 
-optimizer (e.g., NestedAdam, AdamW). It evaluates each configuration 
-and logs the best-performing hyperparameters based on validation loss.
+This script performs grid search across hyperparameter combinations to
+identify the best-performing model configuration based on validation loss.
 """
 
-from copy import deepcopy
 import os
-import numpy as np
 import random
+from copy import deepcopy
+from datetime import datetime
+
+import numpy as np
 import torch
 import torch.nn as nn
-from datetime import datetime
-from tqdm import tqdm
 from sklearn.model_selection import ParameterGrid
-from sklearn.utils import resample
+from tqdm import tqdm
 
-# Local utility imports
-from data_utils import load_images, load_eeg_data, create_dataloader, data_dir, experiment_dir
+from data_utils import create_dataloader, load_eeg_data, load_images, data_dir, experiment_dir
 from model import AlexEEGNet
 from nested_adam import NestedAdam
 
-# =============================================================================
+
 # Configuration Class
-# =============================================================================
 class Args:
     def __init__(self):
         self.sub = 1
@@ -35,19 +31,19 @@ class Args:
         self.patience = 15
 
         self.hyperparameter_space = {
-            "lr": [1e-06, 3e-06, 5e-06, 1e-5],
+            "lr": [5e-06],
+            "weight_decay": [5e-2],
             "batch_size": [32],
-            "alpha": [0.0],
-            "beta": [(0.9, 0.999, 0.9), (0.95, 0.999, 0.9), (0.99, 0.999, 0.9)],
-            "chunk_size": [(1, 1, 1)],
-            "freq": [(1, 1, 1)],
-            "weight_decay": [0.0, 1e-2, 5e-2],
+            "alpha": [0.5, 1.0, 5.0, 10],
+            "beta": [(0.95, 0.9, 0.999)],
+            "freq": [(1, 2, 4), (1, 4, 8), (1, 4, 16), (1, 8, 64)],
+            "chunk_size": [(1, 2, 4), (1, 4, 8), (8, 8, 8), (64, 64, 64)],
         }
+
 
 def main():
     args = Args()
-
-    print(f">>> Hyperparameter Tuning ({args.model} + {args.optim}) <<<")
+    print("=" * 10, f"Hyperparameter Tuning ({args.model} + {args.optim})", "=" * 10)
     # =============================================================================
     # 1. Setup Environment and Random Seeds
     # =============================================================================
@@ -55,7 +51,6 @@ def main():
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
-    
     g_cpu = torch.Generator()
     g_cpu.manual_seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -65,13 +60,10 @@ def main():
     # =============================================================================
     current_time = datetime.now()
     formatted_time = current_time.strftime("%Y_%m_%d_%H_%M_%S")
-    
     log_dir = os.path.join(experiment_dir, "tmp")
     os.makedirs(log_dir, exist_ok=True)
-    
     log_file = os.path.join(log_dir, f"{formatted_time}.log")
     detail_log_file = os.path.join(log_dir, f"{formatted_time}_detail.log")
-    print(f"\nTuning started. Results will be saved to:\n  - {log_file}\n  - {detail_log_file}")
 
     # =============================================================================
     # 3. Load the images (X) and the EEG data (y)
@@ -90,11 +82,7 @@ def main():
     else:
         X_train, X_val, X_test = load_images()
         print(f"Saving image data to {img_cache_path}...")
-        torch.save({
-            "X_train": X_train,
-            "X_val": X_val,
-            "X_test": X_test
-        }, img_cache_path)
+        torch.save({"X_train": X_train, "X_val": X_val, "X_test": X_test}, img_cache_path)
 
     print("\n", "=" * 10, "Load EEG Data", "=" * 10)
     cache_dir = os.path.join(data_dir, "cache")
@@ -112,13 +100,7 @@ def main():
     else:
         y_train, y_val, y_test, ch_names, times = load_eeg_data(args.sub)
         print(f"Saving averaged EEG data to {cache_path}...")
-        torch.save({
-            "y_train": y_train,
-            "y_val": y_val,
-            "y_test": y_test,
-            "ch_names": ch_names,
-            "times": times
-        }, cache_path)
+        torch.save({"y_train": y_train, "y_val": y_val, "y_test": y_test, "ch_names": ch_names, "times": times}, cache_path)
 
     # =============================================================================
     # 4. Hyperparameter Search Loop
@@ -126,7 +108,6 @@ def main():
     with open(log_file, "w") as f, open(detail_log_file, "w") as fd:
         f.write(f">> {args.model} + {args.optim} <<\n")
         f.write("-" * 50 + "\n")
-
         fd.write(f">> {args.model} + {args.optim} <<\n")
         fd.write("-" * 50 + "\n")
 
@@ -144,27 +125,20 @@ def main():
             f.flush()
             fd.flush()
 
-            # Create DataLoaders for this batch_size
-            batch_size = config["batch_size"]
-            train_dl, val_dl, test_dl = create_dataloader(
-                batch_size, 0, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test
-            )
-
-            # Initialize Training Configuration
             patience = args.patience
-            freq = config.get("freq", (1, 8, 16))
-            if args.optim != "NestedAdam":
-                freq = (1,) * len(freq)
-            chunk_size = config.get("chunk_size", (8, 8, 8))
-            alpha = config.get("alpha", 0.5)
-            beta = config.get("beta", (0.9, 0.999, 0.9))
             lr = config.get("lr", 1e-5)
             weight_decay = config.get("weight_decay", 0.0)
+            batch_size = config.get("batch_size", 32)
+            alpha = config.get("alpha", 0.5)
+            beta = config.get("beta", (0.9, 0.9, 0.999))
+            freq = config.get("freq", (1, 8, 16))
+            chunk_size = config.get("chunk_size", (8, 8, 8))
+
+            train_dl, val_dl, test_dl = create_dataloader(batch_size, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
 
             model = AlexEEGNet(num_channels=eeg_channels, time_points=eeg_time_points)
             model.to(device)
 
-            # Configure parameter groups exactly like train.py
             param_fast = [
                 {"params": model.features.parameters(), "lr": config["lr"] * 0.1},
                 {"params": model.classifier[1].parameters(), "lr": config["lr"]},
@@ -183,14 +157,9 @@ def main():
             if args.optim == "AdamW":
                 opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay, betas=beta) for p in params_list]
             elif args.optim == "NestedAdam":
-                opts = [
-                    NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, freq=freq[i], chunk_size=chunk_size[i]) 
-                    for i, p in enumerate(params_list)
-                ]
-            else:
-                raise ValueError(f"Unsupported optimizer: {args.optim}")
+                opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, freq=freq[i], chunk_size=chunk_size[i]) for i, p in enumerate(params_list)]
 
-            loss_fn = nn.MSELoss(reduction='sum').to(device)
+            loss_fn = nn.MSELoss(reduction="sum").to(device)
             torch.backends.cudnn.benchmark = True
 
             best_model = None
@@ -198,22 +167,20 @@ def main():
             epochs_no_improve = 0
             X_buffer, y_buffer = [None] * freq[-1], [None] * freq[-1]
 
-            # Progress bar for Epochs within this specific combination
             pbar = tqdm(range(args.epochs), desc=f"Combo {idx+1}", unit="epoch", leave=False)
-
             for epoch in pbar:
                 # --- Training ---
                 model.train()
                 train_loss = 0.0
                 global_step_offset = epoch * len(train_dl)
-                
+
                 for batch_idx, (X, y) in enumerate(train_dl):
                     current_step = global_step_offset + batch_idx + 1
                     data_idx = current_step % freq[-1]
                     X_buffer[data_idx], y_buffer[data_idx] = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
 
                     update_indices = [i for i, f in enumerate(freq) if current_step % f == 0]
-                    
+
                     if update_indices:
                         for idx_update in range(len(update_indices) - 1, -1, -1):
                             curr_i = update_indices[idx_update]
@@ -224,13 +191,13 @@ def main():
                             if indices:
                                 X = torch.cat([X_buffer[i] for i in indices], dim=0)
                                 y = torch.cat([y_buffer[i] for i in indices], dim=0)
-                                
+
                                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                                    pred = model(X).squeeze()
-                                    loss = loss_fn(pred, y)
+                                    pred = model(X)
+                                    loss = loss_fn(pred.squeeze(), y)
                                 loss = loss / batch_size / eeg_channels / eeg_time_points
                                 loss.backward()
-                                
+
                                 for i in range(curr_i):
                                     opts[i].zero_grad()
 
@@ -239,14 +206,14 @@ def main():
 
                         for opt in opts:
                             opt.zero_grad()
-                    
+
                     with torch.no_grad():
                         X, y = X_buffer[data_idx].to(device), y_buffer[data_idx].to(device)
                         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                            pred = model(X).squeeze()
-                            loss = loss_fn(pred, y)
+                            pred = model(X)
+                            loss = loss_fn(pred.squeeze(), y)
                         train_loss += loss.item()
-                train_loss /= (len(train_dl.dataset) * eeg_channels * eeg_time_points)
+                train_loss /= len(train_dl.dataset) * eeg_channels * eeg_time_points
 
                 # --- Validation ---
                 model.eval()
@@ -254,21 +221,14 @@ def main():
                     X, y = next(iter(val_dl))
                     X, y = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        pred = model(X).squeeze()
-                        v_loss = loss_fn(pred, y)
+                        pred = model(X)
+                        v_loss = loss_fn(pred.squeeze(), y)
                     val_loss = v_loss.item() / (len(val_dl.dataset) * eeg_channels * eeg_time_points)
 
-                # Update progress bar info
-                pbar.set_postfix(
-                    {"Val_Loss": f"{val_loss:.6f}", "Best": f"{best_val_loss:.6f}"}
-                )
-
-                fd.write(
-                    f"    Epoch {epoch + 1:03d} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}\n"
-                )
+                pbar.set_postfix({"Val_Loss": f"{val_loss:.6f}", "Best": f"{best_val_loss:.6f}"})
+                fd.write(f"    Epoch {epoch + 1:03d} | Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}\n")
                 fd.flush()
 
-                # Early Stopping Logic
                 if val_loss < best_val_loss:
                     best_model = deepcopy(model)
                     best_val_loss = val_loss
@@ -279,15 +239,14 @@ def main():
                 if epochs_no_improve >= patience:
                     break
 
-            # Evaluate on Test Set using Best Model
             best_model.to(device)
             best_model.eval()
             with torch.no_grad():
                 X, y = next(iter(test_dl))
                 X, y = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    pred = best_model(X).squeeze()
-                    t_loss = loss_fn(pred, y)
+                    pred = best_model(X)
+                    t_loss = loss_fn(pred.squeeze(), y)
                 test_loss = t_loss.item() / (len(test_dl.dataset) * eeg_channels * eeg_time_points)
 
             del model
@@ -310,9 +269,6 @@ def main():
             f.flush()
             fd.flush()
 
-        # =============================================================================
-        # 5. Final Statistics Summary
-        # =============================================================================
         summary_str = "=" * 50 + "\n"
         summary_str += "Optimization Completed\n"
         summary_str += f"Best Test Loss: {best_overall_loss:.6f}\n"
@@ -324,6 +280,7 @@ def main():
         print(summary_str)
         f.write(summary_str)
         fd.write(summary_str)
+
 
 if __name__ == "__main__":
     main()
