@@ -1,5 +1,8 @@
-import re
+import argparse
 import ast
+import itertools
+import re
+
 import pandas as pd
 
 
@@ -43,8 +46,6 @@ def analyze_hyperparam_log(log_path: str):
 
     critical_params = [col for col in df.columns if col != "test_loss" and df[col].astype(str).nunique() > 1]
 
-    import itertools
-
     all_results = []
 
     max_k = min(len(critical_params), 8)
@@ -60,8 +61,6 @@ def analyze_hyperparam_log(log_path: str):
 
     res_df = pd.DataFrame(all_results)
 
-    import math
-
     print("\n=== Top 10 Hyperparameter Combinations by Mean Loss ===")
     top_mean = res_df.sort_values(by="Mean", ascending=True).head(10)
     for i, row in enumerate(top_mean.itertuples(), 1):
@@ -73,8 +72,6 @@ def analyze_hyperparam_log(log_path: str):
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(description="Analyze hyperparameter log file.")
     parser.add_argument(
         "log_path",

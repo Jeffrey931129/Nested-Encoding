@@ -3,6 +3,12 @@ import torch.nn as nn
 
 
 class AlexEEGNet(nn.Module):
+    """
+    AlexEEGNet: A hybrid neural network combining CNN (AlexNet backbone),
+    fully-connected projection layers, and an LSTM sequence model to decode
+    visual stimuli into EEG responses across channels and time points.
+    """
+
     def __init__(self, num_channels=17, time_points=100):
         super(AlexEEGNet, self).__init__()
         self.num_channels = num_channels
