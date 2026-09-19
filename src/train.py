@@ -36,10 +36,10 @@ class Args:
         self.batch_size = 32
 
         # Nested optimizer specific arguments
-        self.alpha = 0.0
+        self.alpha = 1.0
         self.beta = (0.95, 0.9, 0.999)
-        self.freq = (1, 1, 1)
-        self.chunk_size = (1, 1, 1)
+        self.freq = (1, 8, 64)
+        self.chunk_size = (1, 4, 8)
 
         # Combined analysis arguments
         self.corr_n_iter = 1000
@@ -104,31 +104,43 @@ def main():
     # =============================================================================
     eeg_channels = y_test.shape[1]
     eeg_time_points = y_test.shape[2]
-    train_dl, val_dl, test_dl = create_dataloader(args.batch_size, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
+    model = args.model
+    optim = args.optim
+    epochs = args.epochs
+    patience = args.patience
+    lr = args.lr
+    weight_decay = args.weight_decay
+    batch_size = args.batch_size
+    alpha = args.alpha
+    beta = args.beta
+    freq = args.freq
+    chunk_size = args.chunk_size
 
-    if args.model == "AlexEEGNet":
+    train_dl, val_dl, test_dl = create_dataloader(batch_size, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
+
+    if model == "AlexEEGNet":
         model = AlexEEGNet(num_channels=eeg_channels, time_points=eeg_time_points)
         model.to(device)
 
         param_fast = [
-            {"params": model.features.parameters(), "lr": args.lr * 0.1},
-            {"params": model.classifier[1].parameters(), "lr": args.lr},
-            {"params": model.lstm.parameters(), "lr": args.lr},
-            {"params": model.channel_decoder.parameters(), "lr": args.lr},
+            {"params": model.features.parameters(), "lr": lr / freq[0] * 0.1},
+            {"params": model.classifier[1].parameters(), "lr": lr / freq[0]},
+            {"params": model.lstm.parameters(), "lr": lr / freq[0]},
+            {"params": model.channel_decoder.parameters(), "lr": lr / freq[0]},
         ]
         param_mid = [
-            {"params": model.classifier[4].parameters(), "lr": args.lr},
+            {"params": model.classifier[4].parameters(), "lr": lr / freq[1]},
         ]
         param_slow = [
-            {"params": model.classifier[6].parameters(), "lr": args.lr},
+            {"params": model.classifier[6].parameters(), "lr": lr / freq[2]},
         ]
 
         params_list = [param_fast, param_mid, param_slow]
 
-        if args.optim == "AdamW":
-            opts = [torch.optim.AdamW(p, lr=args.lr, weight_decay=args.weight_decay) for p in params_list]
-        elif args.optim == "NestedAdam":
-            opts = [NestedAdam(p, lr=args.lr, weight_decay=args.weight_decay, alpha=args.alpha, beta=args.beta, freq=args.freq[i], chunk_size=args.chunk_size[i]) for i, p in enumerate(params_list)]
+        if optim == "AdamW":
+            opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay) for p in params_list]
+        elif optim == "NestedAdam":
+            opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, chunk_size=chunk_size[i]) for i, p in enumerate(params_list)]
 
     loss_fn = torch.nn.MSELoss(reduction="sum").to(device)
     torch.backends.cudnn.benchmark = True
@@ -141,47 +153,26 @@ def main():
     best_model = None
     best_val_loss = float("inf")
     epochs_no_improve = 0
-    freq = args.freq if args.optim == "NestedAdam" else (1,) * len(args.freq)
-    X_buffer, y_buffer = [None] * freq[-1], [None] * freq[-1]
+    freq = freq if optim == "NestedAdam" else (1,) * len(freq)
 
-    pbar = tqdm(range(args.epochs), unit="epoch", leave=False)
+    pbar = tqdm(range(epochs), unit="epoch", leave=False)
     for epoch in pbar:
         # --- Training ---
         model.train()
-        global_step_offset = epoch * len(train_dl)
-        for batch_idx, (X, y) in enumerate(train_dl):
-            current_step = global_step_offset + batch_idx + 1
-            data_idx = current_step % freq[-1]
-            X_buffer[data_idx], y_buffer[data_idx] = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
-
-            update_indices = [i for i, f in enumerate(freq) if current_step % f == 0]
-
-            if update_indices:
-                for idx in range(len(update_indices) - 1, -1, -1):
-                    curr_i = update_indices[idx]
-                    next_i = update_indices[idx - 1] if idx > 0 else None
-                    end = freq[next_i] if next_i is not None else 0
-                    indices = [i % freq[-1] for i in range(data_idx - freq[curr_i] + 1, data_idx - end + 1)]
-
-                    if indices:
-                        X = torch.cat([X_buffer[i] for i in indices], dim=0)
-                        y = torch.cat([y_buffer[i] for i in indices], dim=0)
-
-                        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                            pred = model(X).squeeze()
-                            loss = loss_fn(pred, y)
-                        loss = loss / args.batch_size / eeg_channels / eeg_time_points
-                        loss.backward()
-
-                        for i in range(curr_i):
-                            opts[i].zero_grad()
-
-                for i in update_indices:
-                    opts[i].step()
-
-                for opt in opts:
-                    opt.zero_grad()
-
+        
+        for X, y in train_dl:
+            X, y = X.to(device), y.to(device)
+        
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                pred = model(X)
+                loss = loss_fn(pred.squeeze(), y)
+            loss = loss / X.size(0) / eeg_channels / eeg_time_points
+            loss.backward()
+        
+            for opt in opts:
+                opt.step()
+                opt.zero_grad()
+        
         # --- Validation ---
         model.eval()
         with torch.no_grad():
@@ -202,7 +193,7 @@ def main():
         else:
             epochs_no_improve += 1
 
-        if epochs_no_improve >= args.patience:
+        if epochs_no_improve >= patience:
             print(f"\nEarly stopping at epoch {epoch + 1}")
             break
 

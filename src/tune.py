@@ -34,7 +34,7 @@ class Args:
             "lr": [5e-06],
             "weight_decay": [5e-2],
             "batch_size": [32],
-            "alpha": [0.5, 1.0, 5.0, 10],
+            "alpha": [0.5, 1.0, 5.0],
             "beta": [(0.95, 0.9, 0.999)],
             "freq": [(1, 2, 4), (1, 4, 8), (1, 4, 16), (1, 8, 64)],
             "chunk_size": [(1, 2, 4), (1, 4, 8), (8, 8, 8), (64, 64, 64)],
@@ -125,6 +125,9 @@ def main():
             f.flush()
             fd.flush()
 
+            model = args.model
+            optim = args.optim
+            epochs = args.epochs
             patience = args.patience
             lr = config.get("lr", 1e-5)
             weight_decay = config.get("weight_decay", 0.0)
@@ -140,24 +143,24 @@ def main():
             model.to(device)
 
             param_fast = [
-                {"params": model.features.parameters(), "lr": config["lr"] * 0.1},
-                {"params": model.classifier[1].parameters(), "lr": config["lr"]},
-                {"params": model.lstm.parameters(), "lr": config["lr"]},
-                {"params": model.channel_decoder.parameters(), "lr": config["lr"]},
+                {"params": model.features.parameters(), "lr": lr / freq[0] * 0.1},
+                {"params": model.classifier[1].parameters(), "lr": lr / freq[0]},
+                {"params": model.lstm.parameters(), "lr": lr / freq[0]},
+                {"params": model.channel_decoder.parameters(), "lr": lr / freq[0]},
             ]
             param_mid = [
-                {"params": model.classifier[4].parameters(), "lr": config["lr"]},
+                {"params": model.classifier[4].parameters(), "lr": lr / freq[1]},
             ]
             param_slow = [
-                {"params": model.classifier[6].parameters(), "lr": config["lr"]},
+                {"params": model.classifier[6].parameters(), "lr": lr / freq[2]},
             ]
 
             params_list = [param_fast, param_mid, param_slow]
 
-            if args.optim == "AdamW":
+            if optim == "AdamW":
                 opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay, betas=beta) for p in params_list]
-            elif args.optim == "NestedAdam":
-                opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, freq=freq[i], chunk_size=chunk_size[i]) for i, p in enumerate(params_list)]
+            elif optim == "NestedAdam":
+                opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, chunk_size=chunk_size[i]) for i, p in enumerate(params_list)]
 
             loss_fn = nn.MSELoss(reduction="sum").to(device)
             torch.backends.cudnn.benchmark = True
@@ -165,55 +168,28 @@ def main():
             best_model = None
             best_val_loss = float("inf")
             epochs_no_improve = 0
-            X_buffer, y_buffer = [None] * freq[-1], [None] * freq[-1]
 
-            pbar = tqdm(range(args.epochs), desc=f"Combo {idx+1}", unit="epoch", leave=False)
+            pbar = tqdm(range(epochs), desc=f"Combo {idx+1}", unit="epoch", leave=False)
             for epoch in pbar:
                 # --- Training ---
                 model.train()
                 train_loss = 0.0
-                global_step_offset = epoch * len(train_dl)
 
-                for batch_idx, (X, y) in enumerate(train_dl):
-                    current_step = global_step_offset + batch_idx + 1
-                    data_idx = current_step % freq[-1]
-                    X_buffer[data_idx], y_buffer[data_idx] = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
+                for X, y in train_dl:
+                    X, y = X.to(device), y.to(device)
+                    
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        pred = model(X)
+                        loss = loss_fn(pred.squeeze(), y)
+                    loss = loss / X.size(0) / eeg_channels / eeg_time_points
+                    loss.backward()
 
-                    update_indices = [i for i, f in enumerate(freq) if current_step % f == 0]
+                    for opt in opts:
+                        opt.step()
+                        opt.zero_grad()
 
-                    if update_indices:
-                        for idx_update in range(len(update_indices) - 1, -1, -1):
-                            curr_i = update_indices[idx_update]
-                            next_i = update_indices[idx_update - 1] if idx_update > 0 else None
-                            end = freq[next_i] if next_i is not None else 0
-                            indices = [i % freq[-1] for i in range(data_idx - freq[curr_i] + 1, data_idx - end + 1)]
-
-                            if indices:
-                                X = torch.cat([X_buffer[i] for i in indices], dim=0)
-                                y = torch.cat([y_buffer[i] for i in indices], dim=0)
-
-                                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                                    pred = model(X)
-                                    loss = loss_fn(pred.squeeze(), y)
-                                loss = loss / batch_size / eeg_channels / eeg_time_points
-                                loss.backward()
-
-                                for i in range(curr_i):
-                                    opts[i].zero_grad()
-
-                        for i in update_indices:
-                            opts[i].step()
-
-                        for opt in opts:
-                            opt.zero_grad()
-
-                    with torch.no_grad():
-                        X, y = X_buffer[data_idx].to(device), y_buffer[data_idx].to(device)
-                        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                            pred = model(X)
-                            loss = loss_fn(pred.squeeze(), y)
-                        train_loss += loss.item()
-                train_loss /= len(train_dl.dataset) * eeg_channels * eeg_time_points
+                    train_loss += loss.item() * X.size(0)
+                train_loss /= len(train_dl.dataset)
 
                 # --- Validation ---
                 model.eval()

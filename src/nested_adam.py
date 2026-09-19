@@ -21,7 +21,6 @@ class NestedAdam(torch.optim.Optimizer):
         alpha: float = 1.0,
         beta: tuple[float, float, float] = (0.9, 0.9, 0.999),
         eps: float = 1e-8,
-        freq: int = 1,
         chunk_size: int = 4,
         weight_decay: float = 0.0,
     ) -> None:
@@ -35,8 +34,6 @@ class NestedAdam(torch.optim.Optimizer):
             raise ValueError(f"Invalid beta parameter at index 2: {beta[2]}")
         if eps < 0.0:
             raise ValueError(f"Invalid epsilon value: {eps}")
-        if freq < 1:
-            raise ValueError(f"Invalid freq: {freq}")
         if chunk_size < 1:
             raise ValueError(f"Invalid chunk_size: {chunk_size}")
 
@@ -45,7 +42,6 @@ class NestedAdam(torch.optim.Optimizer):
             alpha=alpha,
             beta=beta,
             eps=eps,
-            freq=freq,
             chunk_size=chunk_size,
             weight_decay=weight_decay,
         )
@@ -63,7 +59,6 @@ class NestedAdam(torch.optim.Optimizer):
             alpha = group["alpha"]
             beta1, beta2, beta3 = group["beta"]
             eps = group["eps"]
-            freq = group["freq"]
             chunk_size = group["chunk_size"]
             weight_decay = group["weight_decay"]
 
@@ -71,7 +66,7 @@ class NestedAdam(torch.optim.Optimizer):
                 if p.grad is None:
                     continue
 
-                grad = p.grad / freq
+                grad = p.grad
                 state = self.state[p]
 
                 if not state:
