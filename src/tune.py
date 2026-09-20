@@ -48,11 +48,7 @@ def main():
     # 1. Setup Environment and Random Seeds
     # =============================================================================
     seed = 20200220
-    torch.manual_seed(seed)
-    random.seed(seed)
-    np.random.seed(seed)
     g_cpu = torch.Generator()
-    g_cpu.manual_seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # =============================================================================
@@ -118,6 +114,11 @@ def main():
         best_overall_config = None
 
         for idx, config in enumerate(grid):
+            torch.manual_seed(seed)
+            random.seed(seed)
+            np.random.seed(seed)
+            g_cpu.manual_seed(seed)
+
             combo_str = f"[{idx+1}/{len(grid)}] Config: {config}"
             print(f"\n{combo_str}")
             f.write(f"\n{combo_str}\n")
