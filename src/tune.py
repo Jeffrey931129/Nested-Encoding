@@ -38,7 +38,7 @@ class Args:
             "alpha": [0.5, 1.0, 5.0],
             "beta": [(0.95, 0.9, 0.999)],
             "freq": [(1, 2, 4), (1, 4, 8), (1, 4, 16), (1, 8, 64)],
-            "chunk_size": [(1, 2, 4), (1, 4, 8), (8, 8, 8), (64, 64, 64)],
+            "macro_period": [(1, 2, 4), (1, 4, 8), (8, 8, 8), (64, 64, 64)],
         }
 
 
@@ -137,7 +137,7 @@ def main():
             alpha = config.get("alpha", 0.5)
             beta = config.get("beta", (0.9, 0.9, 0.999))
             freq = config.get("freq", (1, 8, 16))
-            chunk_size = config.get("chunk_size", (8, 8, 8))
+            macro_period = config.get("macro_period", (8, 8, 8))
 
             train_dl, val_dl, test_dl = create_dataloader(batch_size, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
 
@@ -162,7 +162,7 @@ def main():
             if optim == "AdamW":
                 opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay, betas=beta) for p in params_list]
             elif optim == "NestedAdam":
-                opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, chunk_size=chunk_size[i]) for i, p in enumerate(params_list)]
+                opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, macro_period=macro_period[i]) for i, p in enumerate(params_list)]
 
             loss_fn = nn.MSELoss(reduction="sum").to(device)
             torch.backends.cudnn.benchmark = True

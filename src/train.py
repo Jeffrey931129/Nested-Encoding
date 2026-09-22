@@ -40,7 +40,7 @@ class Args:
         self.alpha = 1.0
         self.beta = (0.95, 0.9, 0.999)
         self.freq = (1, 8, 64)
-        self.chunk_size = (1, 4, 8)
+        self.macro_period = (1, 4, 8)
 
         # Combined analysis arguments
         self.corr_n_iter = 1000
@@ -115,7 +115,7 @@ def main():
     alpha = args.alpha
     beta = args.beta
     freq = args.freq
-    chunk_size = args.chunk_size
+    macro_period = args.macro_period
 
     train_dl, val_dl, test_dl = create_dataloader(batch_size, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
 
@@ -141,7 +141,7 @@ def main():
         if optim == "AdamW":
             opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay) for p in params_list]
         elif optim == "NestedAdam":
-            opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, chunk_size=chunk_size[i]) for i, p in enumerate(params_list)]
+            opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, macro_period=macro_period[i]) for i, p in enumerate(params_list)]
 
     loss_fn = torch.nn.MSELoss(reduction="sum").to(device)
     torch.backends.cudnn.benchmark = True

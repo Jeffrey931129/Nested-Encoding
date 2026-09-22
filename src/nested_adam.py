@@ -8,8 +8,8 @@ class NestedAdam(torch.optim.Optimizer):
     A custom Adam optimizer with low-frequency, macroscopic moment updates.
 
     The standard first and second moments (m_1, v) are updated at every step,
-    while an additional macroscopic first moment (m_2) is updated every `chunk_size`
-    steps using the average of the accumulated gradients within the chunk.
+    while an additional macroscopic first moment (m_2) is updated every `macro_period`
+    steps using the average of the accumulated gradients within the macro period.
     Local parameter updates use standard bias-corrected moments combined with the
     bias-corrected macroscopic moment.
     """
@@ -21,7 +21,7 @@ class NestedAdam(torch.optim.Optimizer):
         alpha: float = 1.0,
         beta: tuple[float, float, float] = (0.9, 0.9, 0.999),
         eps: float = 1e-8,
-        chunk_size: int = 4,
+        macro_period: int = 4,
         weight_decay: float = 0.0,
     ) -> None:
         if lr < 0.0:
@@ -34,15 +34,15 @@ class NestedAdam(torch.optim.Optimizer):
             raise ValueError(f"Invalid beta parameter at index 2: {beta[2]}")
         if eps < 0.0:
             raise ValueError(f"Invalid epsilon value: {eps}")
-        if chunk_size < 1:
-            raise ValueError(f"Invalid chunk_size: {chunk_size}")
+        if macro_period < 1:
+            raise ValueError(f"Invalid macro_period: {macro_period}")
 
         defaults = dict(
             lr=lr,
             alpha=alpha,
             beta=beta,
             eps=eps,
-            chunk_size=chunk_size,
+            macro_period=macro_period,
             weight_decay=weight_decay,
         )
         super().__init__(params, defaults)
@@ -59,7 +59,7 @@ class NestedAdam(torch.optim.Optimizer):
             alpha = group["alpha"]
             beta1, beta2, beta3 = group["beta"]
             eps = group["eps"]
-            chunk_size = group["chunk_size"]
+            macro_period = group["macro_period"]
             weight_decay = group["weight_decay"]
 
             for p in group["params"]:
@@ -86,12 +86,12 @@ class NestedAdam(torch.optim.Optimizer):
                 v.mul_(beta3).addcmul_(grad, grad, value=1.0 - beta3)
                 m_buffer.add_(grad)
 
-                if state["step"] % chunk_size == 0:
-                    m_2.mul_(beta2).add_(m_buffer, alpha=(1.0 - beta2) / chunk_size)
+                if state["step"] % macro_period == 0:
+                    m_2.mul_(beta2).add_(m_buffer, alpha=(1.0 - beta2) / macro_period)
                     m_buffer.zero_()
 
                 bias_correction1 = 1.0 - beta1 ** state["step"]
-                bias_correction2 = 1.0 - beta2 ** max(1, state["step"] // chunk_size)
+                bias_correction2 = 1.0 - beta2 ** max(1, state["step"] // macro_period)
                 bias_correction3 = 1.0 - beta3 ** state["step"]
 
                 m_1_hat = m_1 / bias_correction1
