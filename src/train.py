@@ -17,7 +17,8 @@ from sklearn.utils import resample
 from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
 
-from data_utils import create_dataloader, load_eeg_data, load_images, data_dir, experiment_dir
+from data_utils import (create_dataloader, data_dir, experiment_dir,
+                        load_eeg_data, load_images)
 from model import AlexEEGNet
 from nested_adam import NestedAdam
 
@@ -326,6 +327,7 @@ def main():
     # 7. Final Output Export
     # =============================================================================
     stats_dict = {
+        "args": vars(args),
         "correlation": correlation_stat,
         "significance": significance,
         "times": times,
