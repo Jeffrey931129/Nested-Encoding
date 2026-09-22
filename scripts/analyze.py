@@ -61,8 +61,8 @@ def analyze_hyperparam_log(log_path: str):
 
     res_df = pd.DataFrame(all_results)
 
-    print("\n=== Top 10 Hyperparameter Combinations by Mean Loss ===")
-    top_mean = res_df.sort_values(by="Mean", ascending=True).head(10)
+    print("\n=== Top 20 Hyperparameter Combinations by Mean Loss ===")
+    top_mean = res_df.sort_values(by="Mean", ascending=True).head(20)
     for i, row in enumerate(top_mean.itertuples(), 1):
         std_str = "inf" if row.Count == 1 else f"{row.Std:.6e}"
         print(f"Rank {i:2d} | Mean Loss: {row.Mean:.6f} | Std Dev: {std_str:>12} | Count: {int(row.Count):2d}")

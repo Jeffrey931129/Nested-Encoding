@@ -1,15 +1,32 @@
-import os
-import math
-import numpy as np
-import matplotlib
-from matplotlib import pyplot as plt
-from collections import defaultdict
-import time
-import subprocess
-import re
 import ast
+import math
+import os
+import re
+import sys
+import time
+from collections import defaultdict
+
+import matplotlib
+import numpy as np
 import pandas as pd
-from data_utils import data_dir, experiment_dir, figure_dir
+from matplotlib import pyplot as plt
+
+# Add src directory and repository root to sys.path to allow importing modules from src
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(current_dir)
+src_dir = os.path.join(root_dir, "src")
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
+try:
+    from data_utils import data_dir, experiment_dir, figure_dir
+except ImportError:
+    data_dir = os.path.join(root_dir, "data")
+    experiment_dir = os.path.join(root_dir, "experiment")
+    figure_dir = os.path.join(root_dir, "figures")
+
 
 # =============================================================================
 # Configuration Class
@@ -424,22 +441,125 @@ if all_results:
 else:
     print("No valid log data found in the experiment folder.")
 
-# try:
-#     if os.name == 'nt':
-#         subprocess.Popen(["explorer", os.path.abspath(plot1_filename)])
-#         time.sleep(1)
-#         subprocess.Popen(["explorer", os.path.abspath(plot2_filename)])
-#         time.sleep(1)
-#         if os.path.exists(plot3_filename):
-#             subprocess.Popen(["explorer", os.path.abspath(plot3_filename)])
-#     else:
-#         import platform
-#         opener = "open" if platform.system() == "Darwin" else "xdg-open"
-#         subprocess.Popen([opener, os.path.abspath(plot1_filename)])
-#         subprocess.Popen([opener, os.path.abspath(plot2_filename)])
-#         if os.path.exists(plot3_filename):
-#             subprocess.Popen([opener, os.path.abspath(plot3_filename)])
-# except Exception as e:
-#     print(f"Warning: Could not open images automatically ({e})")
+# =============================================================================
+# Plot 4: Random Test Prediction to Nearest Training Sample Match
+# =============================================================================
+import torch
 
+valid_data_with_preds = [item for item in all_plottable_data if "predictions" in item["data"]]
 
+if not valid_data_with_preds:
+    print("No predictions found in the log data. Skipping Plot 4.")
+    print("Hint: Rerun train.py with the updated script to save predictions to .npy files.")
+else:
+    cache_dir = os.path.join(data_dir, "cache")
+    img_cache_path = os.path.join(cache_dir, "image_data_cache.pt")
+    eeg_cache_path = os.path.join(cache_dir, f"sub-{args.sub:02d}_eeg_data_avg.pt")
+    
+    if os.path.exists(img_cache_path) and os.path.exists(eeg_cache_path):
+        print("Loading cached image and EEG data for Plot 4...")
+        img_cache_data = torch.load(img_cache_path, weights_only=False)
+        X_train = img_cache_data["X_train"]
+        X_test = img_cache_data["X_test"]
+        
+        eeg_cache_data = torch.load(eeg_cache_path, weights_only=False)
+        y_train = eeg_cache_data["y_train"]
+        if isinstance(y_train, torch.Tensor):
+            y_train = y_train.cpu().numpy()
+            
+        # 1. Randomly pick test predictions based on the first model (assuming uniform test set)
+        num_test_samples = valid_data_with_preds[0]["data"]["predictions"].shape[0]
+        # Ensure we don't index out of bounds in case of shape mismatch
+        num_test_samples = min(num_test_samples, len(X_test))
+        num_samples_to_plot = min(3, num_test_samples)
+        rand_indices = np.random.choice(num_test_samples, num_samples_to_plot, replace=False)
+        
+        # 2. Figure setup
+        num_models = len(valid_data_with_preds)
+        plots_per_sample = 1 + num_models
+        total_plots = num_samples_to_plot * plots_per_sample
+        
+        cols = min(5, plots_per_sample) if plots_per_sample <= 5 else min(4, total_plots)
+        rows = math.ceil(total_plots / cols)
+        
+        fig4, axes = plt.subplots(rows, cols, figsize=(6 * cols, 6 * rows))
+        fig4.suptitle("Test Prediction vs. Most Similar Training Sample by Model", fontsize=24)
+        
+        if isinstance(axes, np.ndarray):
+            axes_flat = axes.flatten()
+        else:
+            axes_flat = [axes]
+            
+        # Hide any unused subplots
+        for ax in axes_flat[total_plots:]:
+            ax.axis('off')
+            
+        def imshow(img_tensor, ax, title):
+            # De-normalize image
+            img = img_tensor.numpy().transpose((1, 2, 0))
+            mean = np.array([0.485, 0.456, 0.406])
+            std = np.array([0.229, 0.224, 0.225])
+            img = std * img + mean
+            img = np.clip(img, 0, 1)
+            ax.imshow(img)
+            # Use wrap for long titles
+            import textwrap
+            wrapped_title = "\n".join(textwrap.wrap(title, width=35))
+            # Pad to 3 lines to ensure consistent image alignment
+            newlines = wrapped_title.count('\n')
+            if newlines < 2:
+                wrapped_title += '\n' * (2 - newlines)
+            ax.set_title(wrapped_title, fontsize=14)
+            ax.axis('off')
+            
+        # Precompute common elements for Pearson Correlation
+        y_train_flat = y_train.reshape(y_train.shape[0], -1)
+        y_train_mean = np.mean(y_train_flat, axis=1, keepdims=True)
+        y_train_centered = y_train_flat - y_train_mean
+        y_var = np.sum(y_train_centered ** 2, axis=1)
+
+        # 3. Find most similar training sample for each model
+        plot_idx = 0
+        for rand_idx in rand_indices:
+            imshow(X_test[rand_idx], axes_flat[plot_idx], f"Target Test Image\n(Idx: {rand_idx})")
+            plot_idx += 1
+            
+            for idx, item in enumerate(valid_data_with_preds):
+                pred_data = item["data"]["predictions"]
+                if rand_idx >= pred_data.shape[0]:
+                    print(f"Warning: Model {item['label']} has less predictions than rand_idx. Skipping.")
+                    axes_flat[plot_idx].axis('off')
+                    plot_idx += 1
+                    continue
+                    
+                test_pred = pred_data[rand_idx]  # shape: (channels, time_points)
+                test_pred_flat = test_pred.reshape(1, -1)
+                test_pred_mean = np.mean(test_pred_flat, axis=1, keepdims=True)
+                test_pred_centered = test_pred_flat - test_pred_mean
+                
+                cov = np.sum(y_train_centered * test_pred_centered, axis=1)
+                test_var = np.sum(test_pred_centered ** 2, axis=1)
+                
+                denom = np.sqrt(y_var * test_var)
+                valid = denom > 0
+                corr = np.zeros_like(denom)
+                corr[valid] = cov[valid] / denom[valid]
+                
+                best_train_idx = np.argmax(corr)
+                best_corr_val = corr[best_train_idx]
+                
+                label = item["label"]
+                if "test_loss" in item["data"]:
+                    label += f" | Loss: {item['data']['test_loss']:.6f}"
+                    
+                title = f"{label}\nTrain Match: {best_train_idx} (r={best_corr_val:.3f})"
+                imshow(X_train[best_train_idx], axes_flat[plot_idx], title)
+                plot_idx += 1
+        
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plot4_filename = os.path.join(out_dir, "prediction_similarity.jpg")
+        plt.savefig(plot4_filename, format="jpg", dpi=120)
+        plt.close(fig4)
+        print(f"Plot 4 saved to {plot4_filename}")
+    else:
+        print("Missing cached data (.pt files). Cannot plot prediction similarity.")
