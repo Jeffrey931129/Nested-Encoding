@@ -16,7 +16,8 @@ import torch.nn as nn
 from sklearn.model_selection import ParameterGrid
 from tqdm import tqdm
 
-from data_utils import create_dataloader, load_eeg_data, load_images, data_dir, experiment_dir
+from data_utils import (create_dataloader, data_dir, experiment_dir,
+                        load_eeg_data, load_images)
 from model import AlexEEGNet
 from nested_adam import NestedAdam
 
@@ -56,7 +57,7 @@ def main():
     # =============================================================================
     current_time = datetime.now()
     formatted_time = current_time.strftime("%Y_%m_%d_%H_%M_%S")
-    log_dir = os.path.join(experiment_dir, "tmp")
+    log_dir = experiment_dir
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, f"{formatted_time}.log")
     detail_log_file = os.path.join(log_dir, f"{formatted_time}_detail.log")

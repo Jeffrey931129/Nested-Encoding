@@ -335,7 +335,7 @@ def main():
         "predictions": synthetic_data_dict["all_time_points"],
     }
 
-    stats_save_dir = os.path.join(experiment_dir, "tmp")
+    stats_save_dir = experiment_dir
     os.makedirs(stats_save_dir, exist_ok=True)
     save_path = os.path.join(stats_save_dir, ".npy")
     np.save(save_path, stats_dict)
