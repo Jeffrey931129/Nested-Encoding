@@ -35,10 +35,10 @@ class Args:
             "lr": [5e-06],
             "weight_decay": [5e-2],
             "batch_size": [32],
-            "alpha": [0.5, 1.0, 5.0],
+            "alpha": [0.3, 0.5, 1.0, 3.0, 5.0],
             "beta": [(0.95, 0.9, 0.999)],
-            "freq": [(1, 2, 4), (1, 4, 8), (1, 4, 16), (1, 8, 64)],
-            "macro_period": [(1, 2, 4), (1, 4, 8), (8, 8, 8), (64, 64, 64)],
+            "freq": [(1, 1, 1)],
+            "macro_period": [(1, 2, 4), (1, 4, 8), (1, 8, 16), (8, 8, 8)],
         }
 
 
@@ -145,16 +145,16 @@ def main():
             model.to(device)
 
             param_fast = [
-                {"params": model.features.parameters(), "lr": lr / freq[0] * 0.1},
-                {"params": model.classifier[1].parameters(), "lr": lr / freq[0]},
-                {"params": model.lstm.parameters(), "lr": lr / freq[0]},
-                {"params": model.channel_decoder.parameters(), "lr": lr / freq[0]},
+                {"params": model.features.parameters(), "lr": lr * 0.1},
+                {"params": model.classifier[1].parameters(), "lr": lr},
+                {"params": model.lstm.parameters(), "lr": lr},
+                {"params": model.channel_decoder.parameters(), "lr": lr},
             ]
             param_mid = [
-                {"params": model.classifier[4].parameters(), "lr": lr / freq[1]},
+                {"params": model.classifier[4].parameters(), "lr": lr},
             ]
             param_slow = [
-                {"params": model.classifier[6].parameters(), "lr": lr / freq[2]},
+                {"params": model.classifier[6].parameters(), "lr": lr},
             ]
 
             params_list = [param_fast, param_mid, param_slow]

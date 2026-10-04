@@ -99,7 +99,7 @@ class NestedAdam(torch.optim.Optimizer):
                 v_hat = v / bias_correction3
 
                 denom = v_hat.sqrt().add_(eps)
-                update_direction = m_1_hat.mul(alpha).add_(m_2_hat, alpha=1.0 - alpha).div_(denom)
+                update_direction = m_1_hat.add(m_2_hat, alpha=alpha).div_(denom)
                 p.mul_(1.0 - lr * weight_decay)
                 p.add_(update_direction, alpha=-lr)
 
