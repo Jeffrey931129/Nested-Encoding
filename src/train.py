@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 from data_utils import (create_dataloader, data_dir, experiment_dir,
                         load_eeg_data, load_images)
-from model import AlexEEGNet
+from models import AlexEEGNet, AlexNetLite
 from nested_adam import NestedAdam
 
 
@@ -28,7 +28,7 @@ class Args:
     def __init__(self):
         # Core modeling arguments
         self.sub = 1
-        self.model = "AlexEEGNet"
+        self.model = "AlexNetLite"
         self.optim = "NestedAdam"
         self.epochs = 200
         self.patience = 30
@@ -37,10 +37,10 @@ class Args:
         self.batch_size = 32
 
         # Nested optimizer specific arguments
-        self.alpha = 1.0
+        self.alpha = 0.0
         self.beta = (0.95, 0.9, 0.999)
-        self.freq = (1, 8, 64)
-        self.macro_period = (1, 4, 8)
+        self.freq = (1, 1, 1)
+        self.macro_period = (1, 1, 1)
 
         # Combined analysis arguments
         self.corr_n_iter = 1000
@@ -119,10 +119,15 @@ def main():
 
     train_dl, val_dl, test_dl = create_dataloader(batch_size, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
 
-    if model == "AlexEEGNet":
+    if model == "AlexnetLite":
+        model = AlexNetLite(num_channels=eeg_channels, time_points=eeg_time_points)
+        param = [
+            {"params": model.features.parameters(), "lr": lr * 0.1},
+            {"params": model.classifier.parameters(), "lr": lr},
+        ]
+        params_list = [param]
+    elif model == "AlexEEGNet":
         model = AlexEEGNet(num_channels=eeg_channels, time_points=eeg_time_points)
-        model.to(device)
-
         param_fast = [
             {"params": model.features.parameters(), "lr": lr * 0.1},
             {"params": model.classifier[1].parameters(), "lr": lr},
@@ -135,13 +140,13 @@ def main():
         param_slow = [
             {"params": model.classifier[6].parameters(), "lr": lr},
         ]
-
         params_list = [param_fast, param_mid, param_slow]
+    model.to(device)
 
-        if optim == "AdamW":
-            opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay) for p in params_list]
-        elif optim == "NestedAdam":
-            opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, macro_period=macro_period[i]) for i, p in enumerate(params_list)]
+    if optim == "AdamW":
+        opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay) for p in params_list]
+    elif optim == "NestedAdam":
+        opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, macro_period=macro_period[i]) for i, p in enumerate(params_list)]
 
     loss_fn = torch.nn.MSELoss(reduction="sum").to(device)
     torch.backends.cudnn.benchmark = True

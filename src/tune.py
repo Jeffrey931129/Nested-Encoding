@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 from data_utils import (create_dataloader, data_dir, experiment_dir,
                         load_eeg_data, load_images)
-from model import AlexEEGNet
+from models import AlexEEGNet, AlexNetLite
 from nested_adam import NestedAdam
 
 
@@ -26,19 +26,19 @@ from nested_adam import NestedAdam
 class Args:
     def __init__(self):
         self.sub = 1
-        self.model = "AlexEEGNet"
+        self.model = "AlexNetLite"
         self.optim = "NestedAdam"
         self.epochs = 200
         self.patience = 15
 
         self.hyperparameter_space = {
-            "lr": [5e-06],
-            "weight_decay": [5e-2],
+            "lr": [5e-6, 8e-6, 1e-5, 2e-5],
+            "weight_decay": [0, 5e-2, 1e-4],
             "batch_size": [32],
-            "alpha": [0.3, 0.5, 1.0, 3.0, 5.0],
+            "alpha": [0],
             "beta": [(0.95, 0.9, 0.999)],
             "freq": [(1, 1, 1)],
-            "macro_period": [(1, 2, 4), (1, 4, 8), (1, 8, 16), (8, 8, 8)],
+            "macro_period": [(1, 1, 1)],
         }
 
 
@@ -141,25 +141,31 @@ def main():
 
             train_dl, val_dl, test_dl = create_dataloader(batch_size, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
 
-            model = AlexEEGNet(num_channels=eeg_channels, time_points=eeg_time_points)
+            if model == "AlexNetLite":
+                model = AlexNetLite(num_channels=eeg_channels, time_points=eeg_time_points)
+                param = [
+                    {"params": model.features.parameters(), "lr": lr * 0.1},
+                    {"params": model.classifier.parameters(), "lr": lr},
+                ]
+                params_list = [param]
+            elif model == "AlexEEGNet":
+                model = AlexEEGNet(num_channels=eeg_channels, time_points=eeg_time_points)
+                param_fast = [
+                    {"params": model.features.parameters(), "lr": lr * 0.1},
+                    {"params": model.classifier[1].parameters(), "lr": lr},
+                    {"params": model.lstm.parameters(), "lr": lr},
+                    {"params": model.channel_decoder.parameters(), "lr": lr},
+                ]
+                param_mid = [
+                    {"params": model.classifier[4].parameters(), "lr": lr},
+                ]
+                param_slow = [
+                    {"params": model.classifier[6].parameters(), "lr": lr},
+                ]
+                params_list = [param_fast, param_mid, param_slow]
             model.to(device)
 
-            param_fast = [
-                {"params": model.features.parameters(), "lr": lr * 0.1},
-                {"params": model.classifier[1].parameters(), "lr": lr},
-                {"params": model.lstm.parameters(), "lr": lr},
-                {"params": model.channel_decoder.parameters(), "lr": lr},
-            ]
-            param_mid = [
-                {"params": model.classifier[4].parameters(), "lr": lr},
-            ]
-            param_slow = [
-                {"params": model.classifier[6].parameters(), "lr": lr},
-            ]
-
-            params_list = [param_fast, param_mid, param_slow]
-
-            if optim == "AdamW":
+            if optim == "Adam":
                 opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay, betas=beta) for p in params_list]
             elif optim == "NestedAdam":
                 opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, macro_period=macro_period[i]) for i, p in enumerate(params_list)]
@@ -179,7 +185,7 @@ def main():
 
                 for X, y in train_dl:
                     X, y = X.to(device), y.to(device)
-                    
+
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         pred = model(X)
                         loss = loss_fn(pred.squeeze(), y)
