@@ -119,7 +119,7 @@ def main():
 
     train_dl, val_dl, test_dl = create_dataloader(batch_size, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
 
-    if model == "AlexnetLite":
+    if model == "AlexNetLite":
         model = AlexNetLite(num_channels=eeg_channels, time_points=eeg_time_points)
         param = [
             {"params": model.features.parameters(), "lr": lr * 0.1},
