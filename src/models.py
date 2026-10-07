@@ -80,10 +80,10 @@ class AlexNetLite(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
         self.classifier = nn.Sequential(
             nn.Dropout(p=0.5),
-            nn.Linear(128 * 6 * 6, 2048),
+            nn.Linear(128 * 36, 1024),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.5),
-            nn.Linear(2048, 1024),
+            nn.Linear(1024, 1024),
             nn.ReLU(inplace=True),
             nn.Linear(1024, num_channels * time_points),
         )
