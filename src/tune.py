@@ -142,11 +142,17 @@ def main():
 
             if model == "AlexNetLite":
                 model = AlexNetLite(num_channels=eeg_channels, time_points=eeg_time_points)
-                param = [
+                param_fast = [
                     {"params": model.features.parameters(), "lr": lr * 0.1},
-                    {"params": model.classifier.parameters(), "lr": lr},
+                    {"params": model.classifier[1].parameters(), "lr": lr},
                 ]
-                params_list = [param]
+                param_mid = [
+                    {"params": model.classifier[4].parameters(), "lr": lr},
+                ]
+                param_slow = [
+                    {"params": model.classifier[6].parameters(), "lr": lr},
+                ]
+                params_list = [param_fast, param_mid, param_slow]
             elif model == "AlexEEGNet":
                 model = AlexEEGNet(num_channels=eeg_channels, time_points=eeg_time_points)
                 param_fast = [
