@@ -165,7 +165,7 @@ def main():
             model.to(device)
 
             if optim == "Adam":
-                opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay, betas=beta) for p in params_list]
+                opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay, betas=(beta[0], beta[2])) for p in params_list]
             elif optim == "NestedAdam":
                 opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, macro_period=macro_period[i]) for i, p in enumerate(params_list)]
 
