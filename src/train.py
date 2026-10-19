@@ -26,7 +26,7 @@ from nested_adam import NestedAdam
 class Args:
     def __init__(self):
         # Core modeling arguments
-        self.sub = [1, 2, 3, 4, 5]
+        self.sub = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         self.model = "AlexNetLite"
         self.optim = "NestedAdam"
         self.epochs = 200
@@ -38,8 +38,8 @@ class Args:
         # Nested optimizer specific arguments
         self.alpha = 0.0
         self.beta = (0.95, 0.9, 0.999)
-        self.freq = (1, 1, 1)
         self.macro_period = (1, 1, 1)
+        self.update_period = (1, 1, 1)
 
         # Combined analysis arguments
         self.corr_n_iter = 1000
@@ -119,7 +119,7 @@ def main():
         batch_size = args.batch_size
         alpha = args.alpha
         beta = args.beta
-        freq = args.freq
+        update_period = args.update_period
         macro_period = args.macro_period
 
         train_dl, val_dl, test_dl = create_dataloader(batch_size, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
@@ -157,7 +157,7 @@ def main():
         if optim == "Adam":
             opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay, betas=(beta[0], beta[2])) for p in params_list]
         elif optim == "NestedAdam":
-            opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, macro_period=macro_period[i]) for i, p in enumerate(params_list)]
+            opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, macro_period=macro_period[i], update_period=update_period[i]) for i, p in enumerate(params_list)]
 
         loss_fn = torch.nn.MSELoss(reduction="sum").to(device)
         torch.backends.cudnn.benchmark = True
@@ -182,7 +182,7 @@ def main():
 
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     pred = model(X)
-                    loss = loss_fn(pred.squeeze(), y)
+                    loss = loss_fn(pred, y)
                 loss = loss / X.size(0) / eeg_channels / eeg_time_points
                 loss.backward()
 
@@ -197,7 +197,7 @@ def main():
                 X, y = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     pred = model(X)
-                    v_loss = loss_fn(pred.squeeze(), y)
+                    v_loss = loss_fn(pred, y)
                 val_loss = v_loss.item() / (len(val_dl.dataset) * eeg_channels * eeg_time_points)
 
             pbar.set_postfix({"Val_Loss": f"{val_loss:.6f}", "Best": f"{best_val_loss:.6f}"})
@@ -232,7 +232,7 @@ def main():
             X, y = X.to(device, non_blocking=True), y.to(device, non_blocking=True)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 pred = best_model(X)
-                t_loss = loss_fn(pred.squeeze(), y)
+                t_loss = loss_fn(pred, y)
             test_loss = t_loss.item() / (len(test_dl.dataset) * eeg_channels * eeg_time_points)
 
             synthetic_data = pred.detach().float().cpu().numpy().reshape(len(test_dl.dataset), eeg_channels, eeg_time_points)

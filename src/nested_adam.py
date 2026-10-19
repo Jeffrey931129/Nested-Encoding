@@ -18,11 +18,12 @@ class NestedAdam(torch.optim.Optimizer):
         self,
         params: Iterable[torch.nn.Parameter],
         lr: float = 1e-5,
+        weight_decay: float = 0.0,
         alpha: float = 1.0,
         beta: tuple[float, float, float] = (0.9, 0.9, 0.999),
         eps: float = 1e-8,
         macro_period: int = 4,
-        weight_decay: float = 0.0,
+        update_period: int = 4,
     ) -> None:
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
@@ -36,14 +37,17 @@ class NestedAdam(torch.optim.Optimizer):
             raise ValueError(f"Invalid epsilon value: {eps}")
         if macro_period < 1:
             raise ValueError(f"Invalid macro_period: {macro_period}")
+        if update_period < 1:
+            raise ValueError(f"Invalid update_period: {update_period}")
 
         defaults = dict(
             lr=lr,
+            weight_decay=weight_decay,
             alpha=alpha,
             beta=beta,
             eps=eps,
             macro_period=macro_period,
-            weight_decay=weight_decay,
+            update_period=update_period,
         )
         super().__init__(params, defaults)
 
@@ -56,11 +60,12 @@ class NestedAdam(torch.optim.Optimizer):
 
         for group in self.param_groups:
             lr = group["lr"]
+            weight_decay = group["weight_decay"]
             alpha = group["alpha"]
             beta1, beta2, beta3 = group["beta"]
             eps = group["eps"]
             macro_period = group["macro_period"]
-            weight_decay = group["weight_decay"]
+            update_period = group["update_period"]
 
             for p in group["params"]:
                 if p.grad is None:
@@ -90,17 +95,18 @@ class NestedAdam(torch.optim.Optimizer):
                     m_2.mul_(beta2).add_(m_buffer, alpha=(1.0 - beta2) / macro_period)
                     m_buffer.zero_()
 
-                bias_correction1 = 1.0 - beta1 ** state["step"]
-                bias_correction2 = 1.0 - beta2 ** max(1, state["step"] // macro_period)
-                bias_correction3 = 1.0 - beta3 ** state["step"]
+                if state["step"] == 1 or state["step"] % update_period == 0:
+                    bias_correction1 = 1.0 - beta1 ** state["step"]
+                    bias_correction2 = 1.0 - beta2 ** max(1, state["step"] // macro_period)
+                    bias_correction3 = 1.0 - beta3 ** state["step"]
 
-                m_1_hat = m_1 / bias_correction1
-                m_2_hat = m_2 / bias_correction2
-                v_hat = v / bias_correction3
+                    m_1_hat = m_1 / bias_correction1
+                    m_2_hat = m_2 / bias_correction2
+                    v_hat = v / bias_correction3
 
-                denom = v_hat.sqrt().add_(eps)
-                update_direction = m_1_hat.add(m_2_hat, alpha=alpha).div_(denom)
-                p.mul_(1.0 - lr * weight_decay)
-                p.add_(update_direction, alpha=-lr)
+                    denom = v_hat.sqrt().add_(eps)
+                    update_direction = m_1_hat.add(m_2_hat, alpha=alpha).div_(denom)
+                    p.mul_(1.0 - lr * weight_decay)
+                    p.add_(update_direction, alpha=-lr)
 
         return loss
