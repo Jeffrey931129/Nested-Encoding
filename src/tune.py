@@ -31,13 +31,13 @@ class Args:
         self.patience = 15
 
         self.hyperparameter_space = {
-            "lr": [5e-6, 8e-6, 1e-5, 2e-5],
-            "weight_decay": [0, 5e-2, 1e-4],
+            "lr": [8e-6, 1e-5],
+            "weight_decay": [0, 1e-4],
             "batch_size": [32],
-            "alpha": [0],
+            "alpha": [0.3, 0.5, 0.8],
             "beta": [(0.95, 0.9, 0.999)],
-            "freq": [(1, 1, 1)],
-            "macro_period": [(1, 1, 1)],
+            "macro_period": [(4, 4, 4), (16, 16, 16)],
+            "update_period": [(1, 2, 4), (1, 4, 8), (1, 4, 16)],
         }
 
 
@@ -134,7 +134,7 @@ def main():
             batch_size = config.get("batch_size", 32)
             alpha = config.get("alpha", 0.5)
             beta = config.get("beta", (0.9, 0.9, 0.999))
-            freq = config.get("freq", (1, 8, 16))
+            update_period = config.get("update_period", (1, 8, 16))
             macro_period = config.get("macro_period", (8, 8, 8))
 
             train_dl, val_dl, test_dl = create_dataloader(batch_size, g_cpu, X_train, X_val, X_test, y_train, y_val, y_test)
@@ -172,7 +172,7 @@ def main():
             if optim == "Adam":
                 opts = [torch.optim.AdamW(p, lr=lr, weight_decay=weight_decay, betas=(beta[0], beta[2])) for p in params_list]
             elif optim == "NestedAdam":
-                opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, macro_period=macro_period[i]) for i, p in enumerate(params_list)]
+                opts = [NestedAdam(p, lr=lr, weight_decay=weight_decay, alpha=alpha, beta=beta, macro_period=macro_period[i], update_period=update_period[i]) for i, p in enumerate(params_list)]
 
             loss_fn = nn.MSELoss(reduction="sum").to(device)
             torch.backends.cudnn.benchmark = True

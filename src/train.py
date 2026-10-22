@@ -31,15 +31,15 @@ class Args:
         self.optim = "NestedAdam"
         self.epochs = 200
         self.patience = 30
-        self.lr = 5e-6
-        self.weight_decay = 0.05
+        self.lr = 1e-5
+        self.weight_decay = 0.00
         self.batch_size = 32
 
         # Nested optimizer specific arguments
-        self.alpha = 0.0
+        self.alpha = 0.8
         self.beta = (0.95, 0.9, 0.999)
-        self.macro_period = (1, 1, 1)
-        self.update_period = (1, 1, 1)
+        self.macro_period = (16, 16, 16)
+        self.update_period = (1, 2, 4)
 
         # Combined analysis arguments
         self.corr_n_iter = 1000
