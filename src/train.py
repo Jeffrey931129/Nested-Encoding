@@ -171,24 +171,48 @@ def main():
         best_val_loss = float("inf")
         best_epochs = 0
         epochs_no_improve = 0
+        X_buffer, y_buffer = [None] * update_period[-1], [None] * update_period[-1]
 
         pbar = tqdm(range(epochs), unit="epoch", leave=False)
         for epoch in pbar:
             # --- Training ---
             model.train()
+            global_step_offset = epoch * len(train_dl)
+            for batch_idx, (X, y) in enumerate(train_dl):
+                current_step = global_step_offset + batch_idx + 1
+                data_idx = current_step % update_period[-1]
+                X_buffer[data_idx], y_buffer[data_idx] = X.to(device), y.to(device)
+                should_update = [current_step % f == 0 for f in update_period]
+                update_idx = None
+                for i in range(len(should_update) - 1, -1, -1):
+                    if should_update[i]:
+                        update_idx = i
+                        break
+                if update_idx != None:
+                    while update_idx != None:
+                        next_update_idx = None
+                        for i in range(update_idx - 1, -1, -1):
+                            if should_update[i]:
+                                next_update_idx = i
+                                break
+                        end = update_period[next_update_idx] if next_update_idx != None else 0
+                        X = torch.cat([X_buffer[i % update_period[-1]] for i in range(data_idx - update_period[update_idx] + 1, data_idx - end + 1)], dim=0)
+                        y = torch.cat([y_buffer[i % update_period[-1]] for i in range(data_idx - update_period[update_idx] + 1, data_idx - end + 1)], dim=0)
+                        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                            pred = model(X)
+                            loss = loss_fn(pred, y)
+                        loss /= X.size(0) * eeg_channels * eeg_time_points
+                        loss.backward()
+                        for i in range(update_idx - 1, -1, -1):
+                            opts[i].zero_grad()
+                        update_idx = next_update_idx
 
-            for X, y in train_dl:
-                X, y = X.to(device), y.to(device)
+                    for i in range(len(opts)):
+                        if current_step % update_period[i] == 0:
+                            opts[i].step()
 
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    pred = model(X)
-                    loss = loss_fn(pred, y)
-                loss = loss / X.size(0) / eeg_channels / eeg_time_points
-                loss.backward()
-
-                for opt in opts:
-                    opt.step()
-                    opt.zero_grad()
+                    for opt in opts:
+                        opt.zero_grad()
 
             # --- Validation ---
             model.eval()

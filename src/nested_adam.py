@@ -95,18 +95,17 @@ class NestedAdam(torch.optim.Optimizer):
                     m_2.mul_(beta2).add_(m_buffer, alpha=(1.0 - beta2) / macro_period)
                     m_buffer.zero_()
 
-                if state["step"] == 1 or state["step"] % update_period == 0:
-                    bias_correction1 = 1.0 - beta1 ** state["step"]
-                    bias_correction2 = 1.0 - beta2 ** max(1, state["step"] // macro_period)
-                    bias_correction3 = 1.0 - beta3 ** state["step"]
+                bias_correction1 = 1.0 - beta1 ** state["step"]
+                bias_correction2 = 1.0 - beta2 ** max(1, state["step"] // macro_period)
+                bias_correction3 = 1.0 - beta3 ** state["step"]
 
-                    m_1_hat = m_1 / bias_correction1
-                    m_2_hat = m_2 / bias_correction2
-                    v_hat = v / bias_correction3
+                m_1_hat = m_1 / bias_correction1
+                m_2_hat = m_2 / bias_correction2
+                v_hat = v / bias_correction3
 
-                    denom = v_hat.sqrt().add_(eps)
-                    update_direction = m_1_hat.add(m_2_hat, alpha=alpha).div_(denom)
-                    p.mul_(1.0 - lr * weight_decay)
-                    p.add_(update_direction, alpha=-lr)
+                denom = v_hat.sqrt().add_(eps)
+                update_direction = m_1_hat.add(m_2_hat, alpha=alpha).div_(denom)
+                p.mul_(1.0 - lr * weight_decay)
+                p.add_(update_direction, alpha=-lr)
 
         return loss
