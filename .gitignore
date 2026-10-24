@@ -28,6 +28,7 @@ figures/
 experiment/
 logs/
 runs/
+paper/
 *.log
 
 # OS generated files
