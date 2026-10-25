@@ -38,7 +38,7 @@ nested_encoding/
 ├── src/                       # Core source code
 │   ├── data_utils.py          # Data loading, caching, and DataLoader utilities
 │   ├── models.py              # Model definitions (AlexNetLite & AlexEEGNet)
-│   ├── nested_adam.py         # PyTorch implementation of NestedAdam optimizer
+│   ├── optimizers.py          # PyTorch implementation of NestedAdam optimizer
 │   ├── train.py               # Main training pipeline, early stopping & evaluation
 │   └── tune.py                # Hyperparameter grid search script
 ├── environment.yml            # Conda environment specification

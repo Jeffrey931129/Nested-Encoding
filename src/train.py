@@ -18,8 +18,8 @@ from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
 
 from data_utils import data_dir, experiment_dir, load_images, load_eeg_data, create_dataloader
-from models import AlexEEGNet, AlexNetLite
-from nested_adam import NestedAdam
+from models import AlexNetLite, AlexEEGNet
+from optimizers import NestedAdam
 
 
 # Configuration Class
