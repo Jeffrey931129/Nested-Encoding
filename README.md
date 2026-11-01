@@ -20,7 +20,7 @@ Predicting electroencephalography (EEG) signals from visual stimuli is a complex
    - Systematic exploration of structural interpretations for biological multi-timescale learning:
      - **Asynchronous updates**: Update optimizer moments at every step, but apply parameter updates to specific layer groups at different intervals.
      - **Layer-wise batching**: Buffer data across multiple steps to optimize different network depths with varying effective batch sizes.
-     - **Layer-wise learning rates**: Assign hierarchical learning-rate scales reflecting disparate timescales across network representations.
+     - **Gradient accumulation**: Accumulate and average gradients over distinct step intervals across layer groups before applying parameter updates.
 
 ---
 
