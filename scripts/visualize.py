@@ -209,12 +209,9 @@ def main():
         p_len = min(len(overall_times), min_len)
         stacked_corrs = np.array([item["chan_avg_corr"][:p_len] for item in items])
 
-        mean_curve = fisher_z_mean(stacked_corrs, axis=0)
-
-        if len(items) > 1:
-            sem_curve = np.std(stacked_corrs, axis=0, ddof=1) / np.sqrt(len(items))
-        else:
-            sem_curve = np.zeros(p_len)
+        z_corrs = np.arctanh(np.clip(stacked_corrs, -1 + 1e-7, 1 - 1e-7))
+        z_mean = np.mean(z_corrs, axis=0)
+        mean_curve = np.tanh(z_mean)
 
         losses = [it["test_loss"] for it in items if it["test_loss"] is not None]
         label = f"{m_id} (N={len(items)})"
@@ -224,10 +221,13 @@ def main():
         plt.plot(overall_times[:p_len], mean_curve[:p_len], color=color, linewidth=3, label=label)
 
         if len(items) > 1:
+            z_sem = np.std(z_corrs, axis=0, ddof=1) / np.sqrt(len(items))
+            lower_curve = np.tanh(z_mean - z_sem)
+            upper_curve = np.tanh(z_mean + z_sem)
             plt.fill_between(
                 overall_times[:p_len],
-                mean_curve[:p_len] - sem_curve[:p_len],
-                mean_curve[:p_len] + sem_curve[:p_len],
+                lower_curve[:p_len],
+                upper_curve[:p_len],
                 color=color,
                 alpha=0.15,
             )
