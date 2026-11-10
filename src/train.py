@@ -39,7 +39,7 @@ class Args:
         self.alpha = 0.5
         self.beta = (0.95, 0.9, 0.999)
         self.macro_period = (4, 4, 4)
-        self.update_period = (1, 4, 16)
+        self.update_period = (1, 2, 4)
 
         # Combined analysis arguments
         self.corr_n_iter = 1000

@@ -80,29 +80,22 @@ class NestedAdam(torch.optim.Optimizer):
                     state["m_2"] = torch.zeros_like(p, memory_format=torch.preserve_format)
                     state["v"] = torch.zeros_like(p, memory_format=torch.preserve_format)
                     state["m_buffer"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    state["grad_count"] = 0
-                    state["grad_buffer"] = torch.zeros_like(p, memory_format=torch.preserve_format)
 
-                state["grad_count"] += 1
-                state["grad_buffer"].add_(grad)
+                state["step"] += 1
+                m_1 = state["m_1"]
+                m_2 = state["m_2"]
+                v = state["v"]
+                m_buffer = state["m_buffer"]
 
-                if state["grad_count"] % update_period == 0:
-                    grad = state["grad_buffer"] / update_period
-                    state["grad_buffer"].zero_()
-                    state["step"] += 1
-                    m_1 = state["m_1"]
-                    m_2 = state["m_2"]
-                    v = state["v"]
-                    m_buffer = state["m_buffer"]
+                m_1.mul_(beta1).add_(grad, alpha=1.0 - beta1)
+                v.mul_(beta3).addcmul_(grad, grad, value=1.0 - beta3)
+                m_buffer.add_(grad)
 
-                    m_1.mul_(beta1).add_(grad, alpha=1.0 - beta1)
-                    v.mul_(beta3).addcmul_(grad, grad, value=1.0 - beta3)
-                    m_buffer.add_(grad)
+                if state["step"] % macro_period == 0:
+                    m_2.mul_(beta2).add_(m_buffer, alpha=(1.0 - beta2) / macro_period)
+                    m_buffer.zero_()
 
-                    if state["step"] % macro_period == 0:
-                        m_2.mul_(beta2).add_(m_buffer, alpha=(1.0 - beta2) / macro_period)
-                        m_buffer.zero_()
-
+                if state["step"] == 1 or state["step"] % update_period == 0:
                     bias_correction1 = 1.0 - beta1 ** state["step"]
                     bias_correction2 = 1.0 - beta2 ** max(1, state["step"] // macro_period)
                     bias_correction3 = 1.0 - beta3 ** state["step"]
