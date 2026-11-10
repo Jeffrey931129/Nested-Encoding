@@ -36,10 +36,10 @@ class Args:
         self.batch_size = 32
 
         # Nested optimizer specific arguments
-        self.alpha = 0.8
+        self.alpha = 0.5
         self.beta = (0.95, 0.9, 0.999)
-        self.macro_period = (16, 16, 16)
-        self.update_period = (1, 2, 4)
+        self.macro_period = (4, 4, 4)
+        self.update_period = (1, 4, 16)
 
         # Combined analysis arguments
         self.corr_n_iter = 1000
@@ -128,13 +128,13 @@ def main():
             model = AlexNetLite(num_channels=eeg_channels, time_points=eeg_time_points)
             param_fast = [
                 {"params": model.features.parameters(), "lr": lr * 0.1},
-                {"params": model.classifier[1].parameters(), "lr": lr},
+                {"params": model.classifier[6].parameters(), "lr": lr},
             ]
             param_mid = [
                 {"params": model.classifier[4].parameters(), "lr": lr},
             ]
             param_slow = [
-                {"params": model.classifier[6].parameters(), "lr": lr},
+                {"params": model.classifier[1].parameters(), "lr": lr},
             ]
             params_list = [param_fast, param_mid, param_slow]
         elif model == "AlexEEGNet":
